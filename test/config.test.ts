@@ -96,6 +96,18 @@ describe("interpolateEnvVars", () => {
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value).toBe("plain string");
   });
+
+  test("ignores malformed env var references", () => {
+    const result = interpolateEnvVars("${not valid}");
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value).toBe("${not valid}");
+  });
+
+  test("ignores empty braces", () => {
+    const result = interpolateEnvVars("${}");
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value).toBe("${}");
+  });
 });
 
 // --- interpolateDeep ---
