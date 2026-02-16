@@ -17,6 +17,9 @@
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"
   },
+  "bin": {
+    "version-bump": "./src/scripts/version-bump.ts"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "lint": "oxlint src/",
@@ -24,6 +27,7 @@
     "format:check": "biome check src/ test/",
     "test": "bun test",
     "validate": "bun run typecheck && bun run lint && bun run format:check && bun run test",
+    "version:bump": "bun run src/scripts/version-bump.ts",
     "prepare": "husky"
   },
   "devDependencies": {

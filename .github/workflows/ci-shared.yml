@@ -1,0 +1,36 @@
+name: CI (shared)
+
+on:
+  workflow_call:
+    inputs:
+      extra-validate-command:
+        description: "Optional extra command to run after validate (e.g. a full test suite)"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Validate
+        run: bun run validate
+
+      - name: Extra validation
+        if: ${{ inputs.extra-validate-command != '' }}
+        shell: bash
+        run: ${{ inputs.extra-validate-command }}
