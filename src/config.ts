@@ -61,14 +61,17 @@ export function expandPath(path: string): string {
 export function interpolateEnvVars(value: string): Result<string> {
   let error: string | undefined;
 
-  const result = value.replace(/\$\{([^}]+)\}/g, (_match, varName: string) => {
-    const envValue = process.env[varName];
-    if (envValue === undefined) {
-      error = `Config references \${${varName}} but it is not set in the environment`;
-      return "";
-    }
-    return envValue;
-  });
+  const result = value.replace(
+    /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g,
+    (_match, varName: string) => {
+      const envValue = process.env[varName];
+      if (envValue === undefined) {
+        error = `Config references \${${varName}} but it is not set in the environment`;
+        return "";
+      }
+      return envValue;
+    },
+  );
 
   if (error) return err(error);
   return ok(result);
