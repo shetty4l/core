@@ -1,7 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
-import type { DaemonManager } from "../src/daemon";
 import { createDaemonManager } from "../src/daemon";
 
 const TMP = join(import.meta.dir, ".tmp-daemon");
@@ -15,6 +14,8 @@ function setup(): string {
 function teardown() {
   if (existsSync(TMP)) rmSync(TMP, { recursive: true });
 }
+
+afterAll(() => teardown());
 
 describe("createDaemonManager", () => {
   test("creates a manager with all methods", () => {
@@ -83,6 +84,187 @@ describe("createDaemonManager", () => {
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toContain("not running");
     } finally {
+      teardown();
+    }
+  });
+
+  test("restart succeeds even when service is not running", async () => {
+    const configDir = setup();
+    // Create a minimal script that starts and stays alive
+    const script = join(configDir, "serve.ts");
+    writeFileSync(
+      script,
+      `Bun.serve({ port: 0, hostname: "127.0.0.1", fetch() { return Response.json({ status: "healthy", uptime: 0 }); } });`,
+    );
+
+    const manager = createDaemonManager({
+      name: "test",
+      configDir,
+      cliPath: script,
+      serveCommand: "", // script is self-contained, no subcommand
+      startupPollMs: 100,
+      healthTimeoutMs: 3000,
+      // No healthUrl — fall back to PID check
+    });
+
+    try {
+      // restart when nothing is running should still start
+      const result = await manager.restart();
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value.running).toBe(true);
+        expect(result.value.pid).toBeGreaterThan(0);
+      }
+    } finally {
+      await manager.stop();
+      teardown();
+    }
+  });
+
+  test("start with healthUrl polls until healthy", async () => {
+    const configDir = setup();
+    const port = 19876 + Math.floor(Math.random() * 1000);
+
+    // Script that starts an HTTP server
+    const script = join(configDir, "serve.ts");
+    writeFileSync(
+      script,
+      `Bun.serve({ port: ${port}, hostname: "127.0.0.1", fetch() { return Response.json({ status: "healthy", uptime: 1 }); } });`,
+    );
+
+    const manager = createDaemonManager({
+      name: "test",
+      configDir,
+      cliPath: script,
+      serveCommand: "",
+      healthUrl: `http://127.0.0.1:${port}/health`,
+      startupPollMs: 100,
+      healthTimeoutMs: 5000,
+    });
+
+    try {
+      const result = await manager.start();
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value.running).toBe(true);
+        expect(result.value.pid).toBeGreaterThan(0);
+      }
+    } finally {
+      await manager.stop();
+      teardown();
+    }
+  });
+
+  test("start returns error when process exits during startup", async () => {
+    const configDir = setup();
+
+    // Script that exits immediately
+    const script = join(configDir, "serve.ts");
+    writeFileSync(script, "process.exit(1);");
+
+    const manager = createDaemonManager({
+      name: "test",
+      configDir,
+      cliPath: script,
+      serveCommand: "",
+      healthUrl: "http://127.0.0.1:19999/health",
+      startupPollMs: 100,
+      healthTimeoutMs: 2000,
+    });
+
+    try {
+      const result = await manager.start();
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toContain("process exited during startup");
+      }
+      // PID file should be cleaned up
+      expect(existsSync(join(configDir, "test.pid"))).toBe(false);
+    } finally {
+      teardown();
+    }
+  });
+
+  test("stop sends SIGTERM and waits for process to exit", async () => {
+    const configDir = setup();
+    const port = 19876 + Math.floor(Math.random() * 1000);
+
+    const script = join(configDir, "serve.ts");
+    writeFileSync(
+      script,
+      `
+      const s = Bun.serve({ port: ${port}, hostname: "127.0.0.1", fetch() { return Response.json({ status: "healthy", uptime: 0 }); } });
+      process.on("SIGTERM", () => { s.stop(); process.exit(0); });
+      `,
+    );
+
+    const manager = createDaemonManager({
+      name: "test",
+      configDir,
+      cliPath: script,
+      serveCommand: "",
+      healthUrl: `http://127.0.0.1:${port}/health`,
+      startupPollMs: 100,
+      healthTimeoutMs: 5000,
+    });
+
+    try {
+      const startResult = await manager.start();
+      expect(startResult.ok).toBe(true);
+
+      const stopResult = await manager.stop();
+      expect(stopResult.ok).toBe(true);
+      if (stopResult.ok) {
+        expect(stopResult.value.running).toBe(false);
+        expect(stopResult.value.pid).toBeGreaterThan(0);
+      }
+
+      // PID file should be removed
+      expect(existsSync(join(configDir, "test.pid"))).toBe(false);
+    } finally {
+      teardown();
+    }
+  });
+
+  test("restart stops then starts with delay", async () => {
+    const configDir = setup();
+    const port = 19876 + Math.floor(Math.random() * 1000);
+
+    const script = join(configDir, "serve.ts");
+    writeFileSync(
+      script,
+      `
+      const s = Bun.serve({ port: ${port}, hostname: "127.0.0.1", fetch() { return Response.json({ status: "healthy", uptime: 0 }); } });
+      process.on("SIGTERM", () => { s.stop(); process.exit(0); });
+      `,
+    );
+
+    const manager = createDaemonManager({
+      name: "test",
+      configDir,
+      cliPath: script,
+      serveCommand: "",
+      healthUrl: `http://127.0.0.1:${port}/health`,
+      startupPollMs: 200,
+      healthTimeoutMs: 5000,
+    });
+
+    try {
+      // Start first instance
+      const startResult = await manager.start();
+      expect(startResult.ok).toBe(true);
+      const oldPid = startResult.ok ? startResult.value.pid : undefined;
+
+      // Restart — should stop old, delay, start new
+      const restartResult = await manager.restart();
+      expect(restartResult.ok).toBe(true);
+      if (restartResult.ok) {
+        expect(restartResult.value.running).toBe(true);
+        // New PID should differ from old
+        expect(restartResult.value.pid).not.toBe(oldPid);
+      }
+    } finally {
+      await manager.stop();
       teardown();
     }
   });

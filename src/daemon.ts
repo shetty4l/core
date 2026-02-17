@@ -25,8 +25,10 @@ export interface DaemonManagerOpts {
   serveCommand?: string;
   /** Health endpoint URL for verifying the daemon is responsive. */
   healthUrl?: string;
-  /** Milliseconds to wait after spawn before health-checking. Defaults to 500. */
-  startupWaitMs?: number;
+  /** Milliseconds between health poll attempts during startup. Defaults to 500. */
+  startupPollMs?: number;
+  /** Total milliseconds to wait for health endpoint after spawn. Defaults to 10000. */
+  healthTimeoutMs?: number;
   /** Milliseconds to wait for graceful stop before SIGKILL. Defaults to 5000. */
   stopTimeoutMs?: number;
 }
@@ -94,7 +96,8 @@ export function createDaemonManager(opts: DaemonManagerOpts): DaemonManager {
     cliPath,
     serveCommand = "serve",
     healthUrl,
-    startupWaitMs = 500,
+    startupPollMs = 500,
+    healthTimeoutMs = 10_000,
     stopTimeoutMs = 5000,
   } = opts;
 
@@ -157,8 +160,43 @@ export function createDaemonManager(opts: DaemonManagerOpts): DaemonManager {
       });
 
       writePid(pidFile, proc.pid);
-      await new Promise((resolve) => setTimeout(resolve, startupWaitMs));
 
+      if (healthUrl) {
+        // Poll health endpoint until responsive or timeout
+        let waited = 0;
+        while (waited < healthTimeoutMs) {
+          await new Promise((resolve) => setTimeout(resolve, startupPollMs));
+          waited += startupPollMs;
+
+          if (!isProcessRunning(proc.pid)) {
+            removePidFile(pidFile);
+            return err(
+              `${name}: process exited during startup (check ${logFile})`,
+            );
+          }
+
+          const health = await checkHealth();
+          if (health.healthy) {
+            return ok({
+              running: true,
+              pid: proc.pid,
+              uptime: health.uptime,
+              port: health.port,
+            });
+          }
+        }
+
+        // Timed out — kill the unresponsive process
+        process.kill(proc.pid, "SIGKILL");
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        removePidFile(pidFile);
+        return err(
+          `${name}: health check timed out after ${healthTimeoutMs}ms (check ${logFile})`,
+        );
+      }
+
+      // No health URL — fall back to PID check after one poll interval
+      await new Promise((resolve) => setTimeout(resolve, startupPollMs));
       const status = await manager.status();
       if (status.running) {
         return ok(status);
@@ -195,7 +233,13 @@ export function createDaemonManager(opts: DaemonManagerOpts): DaemonManager {
     },
 
     async restart(): Promise<Result<DaemonStatus>> {
-      await manager.stop();
+      const stopResult = await manager.stop();
+      // Propagate stop errors unless the service simply wasn't running
+      if (!stopResult.ok && !stopResult.error.includes("not running")) {
+        return stopResult;
+      }
+      // Brief delay to let the OS release the port
+      await new Promise((resolve) => setTimeout(resolve, startupPollMs));
       return manager.start();
     },
   };
