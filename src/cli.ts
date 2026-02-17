@@ -45,7 +45,7 @@ export function formatUptime(seconds: number): string {
 export type CommandHandler = (
   args: string[],
   json: boolean,
-) => void | Promise<void>;
+) => void | number | Promise<void | number>;
 
 export interface RunCliOpts {
   /** Service name, used in error messages. */
@@ -104,6 +104,6 @@ export async function runCli(opts: RunCliOpts): Promise<void> {
     process.exit(1);
   }
 
-  await handler(args, json);
-  process.exit(0);
+  const exitCode = (await handler(args, json)) ?? 0;
+  process.exit(exitCode);
 }
