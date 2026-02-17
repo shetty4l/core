@@ -40,6 +40,74 @@ export function formatUptime(seconds: number): string {
   return `${hours}h ${mins}m`;
 }
 
+// --- Log file tail ---
+
+export interface LogsCommandOpts {
+  /** Absolute path to the log file. */
+  logFile: string;
+  /** Default number of lines when no count is specified. */
+  defaultCount?: number;
+  /** Message to display when the log file does not exist or is empty. */
+  emptyMessage?: string;
+}
+
+/**
+ * Create a `logs` command handler that tails a log file.
+ *
+ * Supports a positional count argument (`logs 50`) and the standard `--json` flag.
+ * Returns exit code 0 on success, 1 on error.
+ */
+export function createLogsCommand(opts: LogsCommandOpts): CommandHandler {
+  const {
+    logFile,
+    defaultCount = 20,
+    emptyMessage = "No log entries yet.",
+  } = opts;
+
+  return async (args: string[], json: boolean): Promise<number> => {
+    const count = args.length > 0 ? Number.parseInt(args[0], 10) : defaultCount;
+    if (Number.isNaN(count) || count <= 0) {
+      console.error(`Invalid count: ${args[0]}`);
+      return 1;
+    }
+
+    const file = Bun.file(logFile);
+    if (!(await file.exists())) {
+      if (json) {
+        console.log(JSON.stringify({ lines: [], file: logFile }));
+      } else {
+        console.log(emptyMessage);
+      }
+      return 0;
+    }
+
+    const text = await file.text();
+    const allLines = text.split("\n").filter((l) => l.length > 0);
+
+    if (allLines.length === 0) {
+      if (json) {
+        console.log(JSON.stringify({ lines: [], file: logFile }));
+      } else {
+        console.log(emptyMessage);
+      }
+      return 0;
+    }
+
+    const lines = allLines.slice(-count);
+
+    if (json) {
+      console.log(
+        JSON.stringify({ lines, file: logFile, total: allLines.length }),
+      );
+    } else {
+      for (const line of lines) {
+        console.log(line);
+      }
+    }
+    return 0;
+  };
+}
+
 // --- Command dispatch ---
 
 export type CommandHandler = (

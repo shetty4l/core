@@ -1,6 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "fs";
+import { tmpdir } from "os";
 import { join } from "path";
-import { formatUptime, parseArgs } from "../src/cli";
+import { createLogsCommand, formatUptime, parseArgs } from "../src/cli";
 
 // --- parseArgs ---
 
@@ -58,6 +60,147 @@ describe("formatUptime", () => {
 
   test("zero seconds", () => {
     expect(formatUptime(0)).toBe("0s");
+  });
+});
+
+// --- createLogsCommand ---
+
+describe("createLogsCommand", () => {
+  let tmpDir: string;
+
+  beforeAll(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "cli-logs-"));
+  });
+
+  afterAll(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test("returns empty message when file does not exist", async () => {
+    const handler = createLogsCommand({
+      logFile: join(tmpDir, "nonexistent.log"),
+    });
+    const logs: string[] = [];
+    const origLog = console.log;
+    console.log = (...args: unknown[]) => logs.push(args.join(" "));
+    try {
+      const code = await handler([], false);
+      expect(code).toBe(0);
+      expect(logs).toEqual(["No log entries yet."]);
+    } finally {
+      console.log = origLog;
+    }
+  });
+
+  test("returns custom empty message", async () => {
+    const handler = createLogsCommand({
+      logFile: join(tmpDir, "nonexistent.log"),
+      emptyMessage: "Nothing here.",
+    });
+    const logs: string[] = [];
+    const origLog = console.log;
+    console.log = (...args: unknown[]) => logs.push(args.join(" "));
+    try {
+      await handler([], false);
+      expect(logs).toEqual(["Nothing here."]);
+    } finally {
+      console.log = origLog;
+    }
+  });
+
+  test("tails last N lines", async () => {
+    const logFile = join(tmpDir, "tail.log");
+    const lines = Array.from({ length: 50 }, (_, i) => `line ${i + 1}`);
+    await Bun.write(logFile, lines.join("\n") + "\n");
+
+    const handler = createLogsCommand({ logFile });
+    const output: string[] = [];
+    const origLog = console.log;
+    console.log = (...args: unknown[]) => output.push(args.join(" "));
+    try {
+      const code = await handler(["5"], false);
+      expect(code).toBe(0);
+      expect(output).toEqual([
+        "line 46",
+        "line 47",
+        "line 48",
+        "line 49",
+        "line 50",
+      ]);
+    } finally {
+      console.log = origLog;
+    }
+  });
+
+  test("uses defaultCount when no arg provided", async () => {
+    const logFile = join(tmpDir, "default.log");
+    const lines = Array.from({ length: 30 }, (_, i) => `entry ${i + 1}`);
+    await Bun.write(logFile, lines.join("\n") + "\n");
+
+    const handler = createLogsCommand({ logFile, defaultCount: 3 });
+    const output: string[] = [];
+    const origLog = console.log;
+    console.log = (...args: unknown[]) => output.push(args.join(" "));
+    try {
+      await handler([], false);
+      expect(output).toEqual(["entry 28", "entry 29", "entry 30"]);
+    } finally {
+      console.log = origLog;
+    }
+  });
+
+  test("json output includes lines, file, and total", async () => {
+    const logFile = join(tmpDir, "json.log");
+    await Bun.write(logFile, "alpha\nbeta\ngamma\n");
+
+    const handler = createLogsCommand({ logFile });
+    const output: string[] = [];
+    const origLog = console.log;
+    console.log = (...args: unknown[]) => output.push(args.join(" "));
+    try {
+      const code = await handler(["2"], true);
+      expect(code).toBe(0);
+      const parsed = JSON.parse(output[0]);
+      expect(parsed.lines).toEqual(["beta", "gamma"]);
+      expect(parsed.file).toBe(logFile);
+      expect(parsed.total).toBe(3);
+    } finally {
+      console.log = origLog;
+    }
+  });
+
+  test("json output for missing file returns empty lines", async () => {
+    const handler = createLogsCommand({
+      logFile: join(tmpDir, "missing.log"),
+    });
+    const output: string[] = [];
+    const origLog = console.log;
+    console.log = (...args: unknown[]) => output.push(args.join(" "));
+    try {
+      const code = await handler([], true);
+      expect(code).toBe(0);
+      const parsed = JSON.parse(output[0]);
+      expect(parsed.lines).toEqual([]);
+      expect(parsed.file).toContain("missing.log");
+    } finally {
+      console.log = origLog;
+    }
+  });
+
+  test("returns 1 for invalid count", async () => {
+    const handler = createLogsCommand({
+      logFile: join(tmpDir, "any.log"),
+    });
+    const errors: string[] = [];
+    const origError = console.error;
+    console.error = (...args: unknown[]) => errors.push(args.join(" "));
+    try {
+      const code = await handler(["abc"], false);
+      expect(code).toBe(1);
+      expect(errors[0]).toContain("Invalid count");
+    } finally {
+      console.error = origError;
+    }
   });
 });
 
