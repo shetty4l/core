@@ -62,7 +62,8 @@ export interface RunCliOpts {
  * Run the CLI: parse process.argv, dispatch to the matching command handler.
  *
  * Handles --help/-h, --version/-v, and unknown commands automatically.
- * Calls `process.exit(0)` after successful command execution.
+ * If the handler returns a number, exits with that code.
+ * If the handler returns void, the process stays alive (for long-running servers).
  */
 export async function runCli(opts: RunCliOpts): Promise<void> {
   const rawArgs = process.argv.slice(2);
@@ -104,6 +105,12 @@ export async function runCli(opts: RunCliOpts): Promise<void> {
     process.exit(1);
   }
 
-  const exitCode = (await handler(args, json)) ?? 0;
-  process.exit(exitCode);
+  const result = await handler(args, json);
+
+  // If the handler returned a number, exit with that code.
+  // If it returned void/undefined, the command is long-running (e.g. serve)
+  // and the process should stay alive.
+  if (typeof result === "number") {
+    process.exit(result);
+  }
 }
