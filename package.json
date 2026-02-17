@@ -16,6 +16,7 @@
     "./signals": "./src/signals.ts",
     "./cli": "./src/cli.ts",
     "./daemon": "./src/daemon.ts",
+    "./db": "./src/db.ts",
     "./http": "./src/http.ts"
   },
   "files": [
