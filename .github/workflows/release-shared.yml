@@ -41,7 +41,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 0
 
       - name: Setup Bun
@@ -88,9 +88,9 @@ jobs:
 
       - name: Write BUILD_META.json
         run: |
-          SHA="${{ github.event.workflow_run.head_sha }}"
+          SHA="${{ github.event.workflow_run.head_sha || github.sha }}"
           SHORT_SHA="${SHA:0:7}"
-          BRANCH="${{ github.event.workflow_run.head_branch }}"
+          BRANCH="${{ github.event.workflow_run.head_branch || github.ref_name }}"
           TITLE="$(git log -1 --format='%s' "$SHA")"
           BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           jq -n \
