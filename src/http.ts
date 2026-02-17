@@ -64,6 +64,8 @@ export function healthResponse(
 // --- Server ---
 
 export interface ServerOpts {
+  /** Service name used as log prefix (e.g. "synapse"). */
+  name?: string;
   /** Port to listen on. */
   port: number;
   /** Hostname to bind to. Defaults to "127.0.0.1". */
@@ -98,8 +100,9 @@ export interface HttpServer {
  *   4. If onRequest returns null -> 404
  */
 export function createServer(opts: ServerOpts): HttpServer {
-  const { port, host = "127.0.0.1", version, onRequest } = opts;
+  const { port, host = "127.0.0.1", version, onRequest, name } = opts;
   const startTime = Date.now();
+  const prefix = name ? `${name}: ` : "";
 
   const server = Bun.serve({
     port,
@@ -122,7 +125,7 @@ export function createServer(opts: ServerOpts): HttpServer {
         }
         return result;
       } catch (error) {
-        console.error("HTTP request error:", error);
+        console.error(`${prefix}HTTP request error:`, error);
         return jsonError(
           500,
           error instanceof Error ? error.message : "Internal server error",

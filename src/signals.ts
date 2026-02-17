@@ -7,6 +7,8 @@
  */
 
 export interface ShutdownOpts {
+  /** Service name used as log prefix (e.g. "synapse"). */
+  name?: string;
   /** Signals to handle. Defaults to ["SIGINT", "SIGTERM"]. */
   signals?: string[];
   /** Force exit after this many ms. No timeout if omitted. */
@@ -26,6 +28,7 @@ export function onShutdown(
 ): void {
   const signals = opts?.signals ?? ["SIGINT", "SIGTERM"];
   const timeoutMs = opts?.timeoutMs;
+  const prefix = opts?.name ? `${opts.name}: ` : "";
   let shutting = false;
 
   const handler = (signal: string) => {
@@ -33,12 +36,16 @@ export function onShutdown(
       process.exit(1);
     }
     shutting = true;
-    console.log(`\n${signal} received, shutting down...`);
+    console.error(
+      `\n${prefix}${signal.toLowerCase()} received, shutting down...`,
+    );
 
     let timer: ReturnType<typeof setTimeout> | undefined;
     if (timeoutMs !== undefined) {
       timer = setTimeout(() => {
-        console.error(`Shutdown timed out after ${timeoutMs}ms, forcing exit`);
+        console.error(
+          `${prefix}shutdown timed out after ${timeoutMs}ms, forcing exit`,
+        );
         process.exit(1);
       }, timeoutMs);
       // Don't block the event loop from exiting
@@ -53,7 +60,7 @@ export function onShutdown(
           process.exit(0);
         })
         .catch((err) => {
-          console.error("Shutdown cleanup error:", err);
+          console.error(`${prefix}shutdown cleanup error:`, err);
           if (timer) clearTimeout(timer);
           process.exit(1);
         });
