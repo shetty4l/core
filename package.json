@@ -14,8 +14,12 @@
     "./daemon": "./src/daemon.ts",
     "./http": "./src/http.ts"
   },
+  "files": [
+    "src/",
+    "scripts/install-lib.sh"
+  ],
   "publishConfig": {
-    "registry": "https://npm.pkg.github.com"
+    "registry": "https://registry.npmjs.org"
   },
   "bin": {
     "version-bump": "./src/scripts/version-bump.ts"
