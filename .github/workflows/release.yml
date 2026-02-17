@@ -6,6 +6,10 @@ on:
     types: [completed]
     branches: [main]
 
+permissions:
+  contents: write
+  packages: write
+
 jobs:
   release:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
