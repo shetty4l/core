@@ -12,16 +12,18 @@ on:
         required: false
         type: string
         default: ""
-      publish-npm:
-        description: "Whether to publish to GitHub Packages via npm publish"
-        required: false
-        type: boolean
-        default: false
       attach-install-sh:
         description: "Whether to attach scripts/install.sh as a release asset"
         required: false
         type: boolean
         default: false
+    outputs:
+      next_version:
+        description: "The computed next semver version (e.g. 0.2.0)"
+        value: ${{ jobs.release.outputs.next_version }}
+      next_tag:
+        description: "The computed next git tag (e.g. v0.2.0)"
+        value: ${{ jobs.release.outputs.next_tag }}
 
 concurrency:
   group: release
@@ -30,9 +32,11 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
+    outputs:
+      next_version: ${{ steps.version.outputs.next_version }}
+      next_tag: ${{ steps.version.outputs.next_tag }}
     permissions:
       contents: write
-      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -102,16 +106,6 @@ jobs:
               commitTitle: $title,
               buildTimeUtc: $buildTime
             }' > BUILD_META.json
-
-      - name: Setup Node (for npm provenance publishing)
-        if: ${{ inputs.publish-npm }}
-        uses: actions/setup-node@v4
-        with:
-          registry-url: 'https://registry.npmjs.org'
-
-      - name: Publish to npm
-        if: ${{ inputs.publish-npm }}
-        run: npm publish --provenance --access public
 
       - name: Create source tarball
         run: |
