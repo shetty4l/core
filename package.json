@@ -4,7 +4,7 @@
   "description": "Shared infrastructure primitives for Bun/TypeScript services",
   "repository": {
     "type": "git",
-    "url": "https://github.com/shetty4l/core"
+    "url": "git+https://github.com/shetty4l/core.git"
   },
   "type": "module",
   "main": "src/index.ts",
@@ -20,13 +20,14 @@
   },
   "files": [
     "src/",
+    "bin/",
     "scripts/install-lib.sh"
   ],
   "publishConfig": {
     "registry": "https://registry.npmjs.org"
   },
   "bin": {
-    "version-bump": "./src/scripts/version-bump.ts"
+    "version-bump": "./bin/version-bump"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
