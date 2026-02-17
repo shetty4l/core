@@ -27,7 +27,7 @@
     "registry": "https://registry.npmjs.org"
   },
   "bin": {
-    "version-bump": "./bin/version-bump.js"
+    "version-bump": "bin/version-bump.js"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
