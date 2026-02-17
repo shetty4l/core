@@ -7,8 +7,48 @@ on:
       - main
 
 permissions:
-  contents: read
+  contents: write
+  id-token: write
 
 jobs:
   validate:
     uses: ./.github/workflows/ci-shared.yml
+
+  release:
+    needs: validate
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/release-shared.yml
+    with:
+      service-name: core
+
+  publish:
+    needs: release
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Set package version
+        run: |
+          jq --arg v "${{ needs.release.outputs.next_version }}" '.version = $v' package.json > tmp.json
+          mv tmp.json package.json
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Publish to npm
+        run: npm publish --provenance --access public
