@@ -7,7 +7,14 @@
  * No console output — returns structured results for the caller to log.
  */
 
-import { existsSync, mkdirSync, readFileSync, unlinkSync } from "fs";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  unlinkSync,
+} from "fs";
 import { join } from "path";
 import type { Result } from "./result";
 import { err, ok } from "./result";
@@ -153,11 +160,20 @@ export function createDaemonManager(opts: DaemonManagerOpts): DaemonManager {
         mkdirSync(configDir, { recursive: true });
       }
 
+      // Open log file in append mode so previous content is preserved
+      // and ongoing console.error output from the child is captured.
+      // Bun.file() opens with O_WRONLY|O_CREAT (no append, no truncate)
+      // which writes from offset 0 and corrupts logs.
+      const logFd = openSync(logFile, "a");
+
       const proc = Bun.spawn(["bun", "run", cliPath, serveCommand], {
-        stdout: Bun.file(logFile),
-        stderr: Bun.file(logFile),
+        stdout: logFd,
+        stderr: logFd,
         stdin: "ignore",
       });
+
+      // Child inherits its own copy of the fd; parent can close safely.
+      closeSync(logFd);
 
       writePid(pidFile, proc.pid);
 
