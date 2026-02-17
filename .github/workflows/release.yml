@@ -16,4 +16,36 @@ jobs:
     uses: ./.github/workflows/release-shared.yml
     with:
       service-name: core
-      publish-npm: true
+
+  publish:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Set package version
+        run: |
+          jq --arg v "${{ needs.release.outputs.next_version }}" '.version = $v' package.json > tmp.json
+          mv tmp.json package.json
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Publish to npm
+        run: npm publish --provenance --access public
