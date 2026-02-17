@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { createDaemonManager } from "../src/daemon";
 
@@ -263,6 +263,57 @@ describe("createDaemonManager", () => {
         // New PID should differ from old
         expect(restartResult.value.pid).not.toBe(oldPid);
       }
+    } finally {
+      await manager.stop();
+      teardown();
+    }
+  });
+
+  test("log file appends instead of overwriting", async () => {
+    const configDir = setup();
+    const port = 19876 + Math.floor(Math.random() * 1000);
+
+    // Seed the log file with previous content
+    const logFile = join(configDir, "test.log");
+    writeFileSync(logFile, "previous log line\n");
+
+    // Script that writes to stderr then serves
+    const script = join(configDir, "serve.ts");
+    writeFileSync(
+      script,
+      `
+      console.error("daemon started");
+      const s = Bun.serve({ port: ${port}, hostname: "127.0.0.1", fetch() { return Response.json({ status: "healthy", uptime: 0 }); } });
+      process.on("SIGTERM", () => { s.stop(); process.exit(0); });
+      `,
+    );
+
+    const manager = createDaemonManager({
+      name: "test",
+      configDir,
+      cliPath: script,
+      serveCommand: "",
+      healthUrl: `http://127.0.0.1:${port}/health`,
+      startupPollMs: 100,
+      healthTimeoutMs: 5000,
+    });
+
+    try {
+      const result = await manager.start();
+      expect(result.ok).toBe(true);
+
+      // Give the child a moment to flush stderr
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      const content = readFileSync(logFile, "utf-8");
+      // Previous content must be preserved
+      expect(content).toContain("previous log line");
+      // New output must be appended
+      expect(content).toContain("daemon started");
+      // Previous must come first
+      expect(content.indexOf("previous log line")).toBeLessThan(
+        content.indexOf("daemon started"),
+      );
     } finally {
       await manager.stop();
       teardown();
