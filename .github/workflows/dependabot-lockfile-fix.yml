@@ -1,0 +1,10 @@
+name: Dependabot Lockfile Fix
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    branches: [main]
+
+jobs:
+  fix:
+    uses: ./.github/workflows/dependabot-lockfile-fix-shared.yml
