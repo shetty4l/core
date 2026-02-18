@@ -1,0 +1,39 @@
+name: Dependabot Lockfile Fix (shared)
+
+on:
+  workflow_call:
+
+permissions:
+  contents: write
+
+jobs:
+  fix-lockfile:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout dependabot branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Update bun lockfile
+        run: |
+          if [ ! -f bun.lock ]; then
+            echo "No bun.lock file found, skipping"
+            exit 0
+          fi
+          bun install
+
+      - name: Commit lockfile changes
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add bun.lock
+          git diff --cached --quiet && exit 0
+          git commit -m "chore: update bun.lock for dependabot"
+          git push
