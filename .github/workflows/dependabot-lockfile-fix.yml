@@ -1,10 +1,17 @@
 name: Dependabot Lockfile Fix
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize]
     branches: [main]
+    paths:
+      - "**/package.json"
+      - "**/bun.lock"
+
+permissions:
+  contents: write
 
 jobs:
   fix:
+    if: github.actor == 'dependabot[bot]'
     uses: ./.github/workflows/dependabot-lockfile-fix-shared.yml
