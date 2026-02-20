@@ -13,6 +13,7 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  renameSync,
   unlinkSync,
 } from "fs";
 import { join } from "path";
@@ -160,10 +161,20 @@ export function createDaemonManager(opts: DaemonManagerOpts): DaemonManager {
         mkdirSync(configDir, { recursive: true });
       }
 
-      // Open log file in append mode so previous content is preserved
-      // and ongoing console.error output from the child is captured.
+      // Rotate previous log file so it doesn't grow unbounded.
+      // Keep one generation: service.log -> service.log.old
+      if (existsSync(logFile)) {
+        try {
+          renameSync(logFile, `${logFile}.old`);
+        } catch {
+          // Best-effort — if rotation fails, append to existing file
+        }
+      }
+
+      // Open log file in append mode so ongoing console.error output
+      // from the child is captured.
       // Bun.file() opens with O_WRONLY|O_CREAT (no append, no truncate)
-      // which writes from offset 0 and corrupts logs.
+      // which writes from offset 0 and corrupts logs — always use openSync("a").
       const logFd = openSync(logFile, "a");
 
       const proc = Bun.spawn(["bun", "run", cliPath, serveCommand], {
