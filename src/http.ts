@@ -81,6 +81,17 @@ export interface ServerOpts {
     req: Request,
     url: URL,
   ) => Response | Promise<Response> | null | Promise<Response | null>;
+  /**
+   * Optional custom health endpoint handler.
+   * When provided, called instead of the default healthResponse().
+   * Return a full Response to control both body and HTTP status
+   * (e.g. 503 for degraded state). Use healthResponse() inside
+   * the handler for the standard healthy case.
+   */
+  onHealth?: (
+    version: string,
+    startTime: number,
+  ) => Response | Promise<Response>;
 }
 
 export interface HttpServer {
@@ -100,7 +111,7 @@ export interface HttpServer {
  *   4. If onRequest returns null -> 404
  */
 export function createServer(opts: ServerOpts): HttpServer {
-  const { port, host = "127.0.0.1", version, onRequest, name } = opts;
+  const { port, host = "127.0.0.1", version, onRequest, onHealth, name } = opts;
   const startTime = Date.now();
   const prefix = name ? `${name}: ` : "";
 
@@ -115,7 +126,9 @@ export function createServer(opts: ServerOpts): HttpServer {
       }
 
       if (url.pathname === "/health" && req.method === "GET") {
-        return healthResponse(version, startTime);
+        return onHealth
+          ? onHealth(version, startTime)
+          : healthResponse(version, startTime);
       }
 
       try {

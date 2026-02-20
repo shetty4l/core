@@ -149,4 +149,49 @@ describe("createServer", () => {
     const res = await fetch(`http://localhost:${server!.port}/nonexistent`);
     expect(res.status).toBe(404);
   });
+
+  test("uses custom onHealth handler when provided", async () => {
+    server!.stop();
+    server = createServer({
+      port: 0,
+      version: "0.1.0-test",
+      onRequest: () => null,
+      onHealth: (version, startTime) =>
+        jsonOk(
+          {
+            status: "degraded",
+            version,
+            uptime: Math.floor((Date.now() - startTime) / 1000),
+            providers: { openai: "down" },
+          },
+          503,
+        ),
+    });
+
+    const res = await fetch(`http://localhost:${server.port}/health`);
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.status).toBe("degraded");
+    expect(body.version).toBe("0.1.0-test");
+    expect(body.providers).toEqual({ openai: "down" });
+  });
+
+  test("supports async onHealth handler", async () => {
+    server!.stop();
+    server = createServer({
+      port: 0,
+      version: "0.1.0-test",
+      onRequest: () => null,
+      onHealth: async (version, startTime) => {
+        await Promise.resolve(); // simulate async work
+        return healthResponse(version, startTime, { db: "ok" });
+      },
+    });
+
+    const res = await fetch(`http://localhost:${server.port}/health`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.status).toBe("healthy");
+    expect(body.db).toBe("ok");
+  });
 });
