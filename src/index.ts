@@ -4,7 +4,7 @@
  * Shared infrastructure primitives for Bun/TypeScript services.
  *
  * Import from the root for convenience, or from sub-paths for specificity:
- *   import { config, http } from "@shetty4l/core"
+ *   import { config, http, log } from "@shetty4l/core"
  *   import { parsePort } from "@shetty4l/core/config"
  */
 
