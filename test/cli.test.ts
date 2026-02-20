@@ -202,6 +202,46 @@ describe("createLogsCommand", () => {
       console.error = origError;
     }
   });
+
+  test("strips null bytes from log file content", async () => {
+    const logFile = join(tmpDir, "nullbytes.log");
+    // Simulate corrupted log with null bytes interspersed
+    await Bun.write(logFile, "clean line\n\0\0corrupt\0ed line\n\0\0\0\n");
+
+    const handler = createLogsCommand({ logFile });
+    const output: string[] = [];
+    const origLog = console.log;
+    console.log = (...args: unknown[]) => output.push(args.join(" "));
+    try {
+      const code = await handler(["10"], false);
+      expect(code).toBe(0);
+      expect(output).toEqual(["clean line", "corrupted line"]);
+      // No null bytes in output
+      for (const line of output) {
+        expect(line).not.toContain("\0");
+      }
+    } finally {
+      console.log = origLog;
+    }
+  });
+
+  test("strips null bytes in json mode", async () => {
+    const logFile = join(tmpDir, "nulljson.log");
+    await Bun.write(logFile, "good\n\0bad\0line\n");
+
+    const handler = createLogsCommand({ logFile });
+    const output: string[] = [];
+    const origLog = console.log;
+    console.log = (...args: unknown[]) => output.push(args.join(" "));
+    try {
+      const code = await handler(["10"], true);
+      expect(code).toBe(0);
+      const parsed = JSON.parse(output[0]);
+      expect(parsed.lines).toEqual(["good", "badline"]);
+    } finally {
+      console.log = origLog;
+    }
+  });
 });
 
 // --- runCli (subprocess tests) ---

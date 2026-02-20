@@ -269,20 +269,20 @@ describe("createDaemonManager", () => {
     }
   });
 
-  test("log file appends instead of overwriting", async () => {
+  test("rotates existing log file to .old on start", async () => {
     const configDir = setup();
     const port = 19876 + Math.floor(Math.random() * 1000);
 
     // Seed the log file with previous content
     const logFile = join(configDir, "test.log");
-    writeFileSync(logFile, "previous log line\n");
+    const oldLogFile = join(configDir, "test.log.old");
+    writeFileSync(logFile, "previous session logs\n");
 
-    // Script that writes to stderr then serves
     const script = join(configDir, "serve.ts");
     writeFileSync(
       script,
       `
-      console.error("daemon started");
+      console.error("new session started");
       const s = Bun.serve({ port: ${port}, hostname: "127.0.0.1", fetch() { return Response.json({ status: "healthy", uptime: 0 }); } });
       process.on("SIGTERM", () => { s.stop(); process.exit(0); });
       `,
@@ -305,14 +305,61 @@ describe("createDaemonManager", () => {
       // Give the child a moment to flush stderr
       await new Promise((resolve) => setTimeout(resolve, 200));
 
+      // Old log should be rotated
+      expect(existsSync(oldLogFile)).toBe(true);
+      const oldContent = readFileSync(oldLogFile, "utf-8");
+      expect(oldContent).toContain("previous session logs");
+
+      // New log should only have new content
+      const newContent = readFileSync(logFile, "utf-8");
+      expect(newContent).toContain("new session started");
+      expect(newContent).not.toContain("previous session logs");
+    } finally {
+      await manager.stop();
+      teardown();
+    }
+  });
+
+  test("log file captures child output via append mode", async () => {
+    const configDir = setup();
+    const port = 19876 + Math.floor(Math.random() * 1000);
+
+    // Script that writes multiple lines to stderr then serves
+    const script = join(configDir, "serve.ts");
+    writeFileSync(
+      script,
+      `
+      console.error("line one");
+      console.error("line two");
+      const s = Bun.serve({ port: ${port}, hostname: "127.0.0.1", fetch() { return Response.json({ status: "healthy", uptime: 0 }); } });
+      process.on("SIGTERM", () => { s.stop(); process.exit(0); });
+      `,
+    );
+
+    const manager = createDaemonManager({
+      name: "test",
+      configDir,
+      cliPath: script,
+      serveCommand: "",
+      healthUrl: `http://127.0.0.1:${port}/health`,
+      startupPollMs: 100,
+      healthTimeoutMs: 5000,
+    });
+
+    try {
+      const result = await manager.start();
+      expect(result.ok).toBe(true);
+
+      // Give the child a moment to flush stderr
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      const logFile = join(configDir, "test.log");
       const content = readFileSync(logFile, "utf-8");
-      // Previous content must be preserved
-      expect(content).toContain("previous log line");
-      // New output must be appended
-      expect(content).toContain("daemon started");
-      // Previous must come first
-      expect(content.indexOf("previous log line")).toBeLessThan(
-        content.indexOf("daemon started"),
+      // Both lines must be captured via append mode
+      expect(content).toContain("line one");
+      expect(content).toContain("line two");
+      expect(content.indexOf("line one")).toBeLessThan(
+        content.indexOf("line two"),
       );
     } finally {
       await manager.stop();

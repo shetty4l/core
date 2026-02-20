@@ -14,6 +14,7 @@ export * as config from "./config";
 export * as daemon from "./daemon";
 export * as db from "./db";
 export * as http from "./http";
+export * as log from "./log";
 export type { Err, Ok, Port, Result } from "./result";
 export { err, ok } from "./result";
 export type { ShutdownOpts } from "./signals";

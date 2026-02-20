@@ -81,7 +81,9 @@ export function createLogsCommand(opts: LogsCommandOpts): CommandHandler {
       return 0;
     }
 
-    const text = await file.text();
+    const raw = await file.text();
+    // Strip null bytes that can appear from historical Bun.file() corruption
+    const text = raw.replaceAll("\0", "");
     const allLines = text.split("\n").filter((l) => l.length > 0);
 
     if (allLines.length === 0) {
