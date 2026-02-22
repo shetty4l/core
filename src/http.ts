@@ -92,6 +92,11 @@ export interface ServerOpts {
     version: string,
     startTime: number,
   ) => Response | Promise<Response>;
+  /**
+   * Maximum seconds a connection may be idle before the server closes it.
+   * Passed directly to Bun.serve(). Defaults to Bun's built-in default (10s).
+   */
+  idleTimeout?: number;
 }
 
 export interface HttpServer {
@@ -111,13 +116,22 @@ export interface HttpServer {
  *   4. If onRequest returns null -> 404
  */
 export function createServer(opts: ServerOpts): HttpServer {
-  const { port, host = "127.0.0.1", version, onRequest, onHealth, name } = opts;
+  const {
+    port,
+    host = "127.0.0.1",
+    version,
+    onRequest,
+    onHealth,
+    name,
+    idleTimeout,
+  } = opts;
   const startTime = Date.now();
   const prefix = name ? `${name}: ` : "";
 
   const server = Bun.serve({
     port,
     hostname: host,
+    ...(idleTimeout != null && { idleTimeout }),
     async fetch(req: Request): Promise<Response> {
       const url = new URL(req.url);
 

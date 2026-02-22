@@ -176,6 +176,19 @@ describe("createServer", () => {
     expect(body.providers).toEqual({ openai: "down" });
   });
 
+  test("accepts idleTimeout option", async () => {
+    server!.stop();
+    server = createServer({
+      port: 0,
+      version: "0.1.0-test",
+      onRequest: () => null,
+      idleTimeout: 120,
+    });
+
+    const res = await fetch(`http://localhost:${server.port}/health`);
+    expect(res.status).toBe(200);
+  });
+
   test("supports async onHealth handler", async () => {
     server!.stop();
     server = createServer({
