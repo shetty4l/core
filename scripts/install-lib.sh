@@ -54,7 +54,7 @@ fetch_latest_release() {
   fi
 
   local release_json
-  release_json=$(curl -fsSL "${auth_header[@]}" "https://api.github.com/repos/${REPO}/releases/latest")
+  release_json=$(curl -fsSL ${auth_header[@]+"${auth_header[@]}"} "https://api.github.com/repos/${REPO}/releases/latest")
 
   RELEASE_TAG=$(echo "$release_json" | jq -r '.tag_name')
   TARBALL_URL=$(echo "$release_json" | jq -r ".assets[] | select(.name | startswith(\"${SERVICE_NAME}-\")) | .browser_download_url")
@@ -89,7 +89,7 @@ download_and_extract() {
   info "Downloading ${RELEASE_TAG}..."
   local tmpfile
   tmpfile=$(mktemp)
-  curl -fsSL "${auth_header[@]}" -o "$tmpfile" "$TARBALL_URL"
+  curl -fsSL ${auth_header[@]+"${auth_header[@]}"} -o "$tmpfile" "$TARBALL_URL"
 
   info "Extracting to ${version_dir}..."
   tar xzf "$tmpfile" -C "$version_dir"
