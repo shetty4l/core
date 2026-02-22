@@ -46,8 +46,15 @@ check_prereqs() {
 
 fetch_latest_release() {
   info "Fetching latest release from GitHub..."
+
+  local auth_header=()
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
+    auth_header=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+    info "Using authenticated GitHub API request"
+  fi
+
   local release_json
-  release_json=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest")
+  release_json=$(curl -fsSL "${auth_header[@]}" "https://api.github.com/repos/${REPO}/releases/latest")
 
   RELEASE_TAG=$(echo "$release_json" | jq -r '.tag_name')
   TARBALL_URL=$(echo "$release_json" | jq -r ".assets[] | select(.name | startswith(\"${SERVICE_NAME}-\")) | .browser_download_url")
@@ -74,10 +81,15 @@ download_and_extract() {
 
   mkdir -p "$version_dir"
 
+  local auth_header=()
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
+    auth_header=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+  fi
+
   info "Downloading ${RELEASE_TAG}..."
   local tmpfile
   tmpfile=$(mktemp)
-  curl -fsSL -o "$tmpfile" "$TARBALL_URL"
+  curl -fsSL "${auth_header[@]}" -o "$tmpfile" "$TARBALL_URL"
 
   info "Extracting to ${version_dir}..."
   tar xzf "$tmpfile" -C "$version_dir"
