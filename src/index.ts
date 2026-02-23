@@ -19,5 +19,6 @@ export type { Err, Ok, Port, Result } from "./result";
 export { err, ok } from "./result";
 export type { ShutdownOpts } from "./signals";
 export { onShutdown } from "./signals";
+export * as state from "./state";
 // Universal primitives — exported directly
 export { readVersion } from "./version";

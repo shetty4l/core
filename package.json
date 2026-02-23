@@ -18,7 +18,8 @@
     "./daemon": "./src/daemon.ts",
     "./db": "./src/db.ts",
     "./http": "./src/http.ts",
-    "./log": "./src/log.ts"
+    "./log": "./src/log.ts",
+    "./state": "./src/state/index.ts"
   },
   "files": [
     "src/",
