@@ -1,22 +1,27 @@
 /**
  * TC39 decorators for state persistence.
  *
+ * Uses explicit type specification for all fields to ensure correct
+ * serialization without relying on runtime type inference.
+ *
+ * Note: Bun's TC39 decorator implementation differs from the spec:
+ * - Field decorator context is the field name as a string (not an object)
+ * - Class decorator context is undefined (not an object)
+ * - Field decorators run before class decorator (allows global accumulation)
+ *
  * @example
  * ```ts
  * @Persisted('my_state')
  * class MyState {
- *   @Field() name: string = '';
- *   @Field({ type: 'date' }) createdAt: Date | null = null;
+ *   @Field('string') name: string = '';
+ *   @Field('date') createdAt: Date | null = null;
+ *   @Field('number') count: number = 0;
+ *   @Field('boolean') enabled: boolean = true;
  * }
  * ```
  */
 
-import {
-  type ClassMeta,
-  classMeta,
-  type FieldMeta,
-  type FieldType,
-} from "./types";
+import { classMeta, type FieldMeta, type FieldType } from "./types";
 
 /**
  * Convert camelCase to snake_case.
@@ -25,25 +30,19 @@ function toSnakeCase(str: string): string {
   return str.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
 }
 
-/**
- * Infer field type from a default value.
- * Returns undefined if type cannot be inferred (e.g., null).
- */
-function inferType(value: unknown): FieldType | undefined {
-  if (typeof value === "string") return "string";
-  if (typeof value === "number") return "number";
-  if (typeof value === "boolean") return "boolean";
-  if (value instanceof Date) return "date";
-  return undefined;
-}
-
 /** Options for the @Field decorator. */
 export interface FieldOptions {
-  /** Explicit field type. Required when default is null. */
-  type?: FieldType;
   /** Custom column name. Defaults to snake_case of property name. */
   column?: string;
 }
+
+type PendingFieldDef = { column: string; type: FieldType };
+type PendingFieldsMap = Map<string, PendingFieldDef>;
+
+// Global accumulator for pending field definitions.
+// In Bun's TC39 implementation, @Field decorators run synchronously
+// before the @Persisted decorator for the same class.
+let globalPendingFields: PendingFieldsMap | null = null;
 
 /**
  * Mark a class as persisted to a SQLite table.
@@ -52,9 +51,10 @@ export interface FieldOptions {
  * @throws Error if class extends another @Persisted class
  */
 export function Persisted(table: string) {
+  // Bun's TC39 decorator: context is undefined, not ClassDecoratorContext
   return function <T extends new (...args: unknown[]) => object>(
     target: T,
-    _context: ClassDecoratorContext<T>,
+    _context: unknown,
   ): T {
     // Check prototype chain for existing @Persisted class
     let proto = Object.getPrototypeOf(target);
@@ -69,15 +69,22 @@ export function Persisted(table: string) {
       proto = Object.getPrototypeOf(proto);
     }
 
-    // Get or create metadata (fields may have been added by @Field)
-    let meta = classMeta.get(target);
-    if (!meta) {
-      meta = { table, fields: new Map() };
-      classMeta.set(target, meta);
-    } else {
-      meta.table = table;
+    // Initialize metadata for this class
+    const meta = { table, fields: new Map<string, FieldMeta>() };
+
+    // Consume pending fields accumulated by @Field decorators
+    if (globalPendingFields) {
+      for (const [property, def] of globalPendingFields) {
+        meta.fields.set(property, {
+          property,
+          column: def.column,
+          type: def.type,
+        });
+      }
+      globalPendingFields = null;
     }
 
+    classMeta.set(target, meta);
     return target;
   };
 }
@@ -85,52 +92,20 @@ export function Persisted(table: string) {
 /**
  * Mark a property as a persisted field.
  *
- * Type is inferred from the default value. If default is null,
- * you must provide an explicit type option.
- *
- * @param options - Optional field configuration
- * @throws Error if type cannot be inferred and not explicitly provided
+ * @param type - The field type ('string' | 'number' | 'boolean' | 'date')
+ * @param options - Optional field configuration (column name override)
  */
-export function Field(options?: FieldOptions) {
-  return function <T>(
-    _target: undefined,
-    context: ClassFieldDecoratorContext<T>,
-  ): void {
-    const property = String(context.name);
+export function Field(type: FieldType, options?: FieldOptions) {
+  // Bun's TC39 decorator: context is the field name as string, not ClassFieldDecoratorContext
+  return function (_target: undefined, context: unknown): void {
+    // In Bun, context is the field name as a string
+    const property = typeof context === "string" ? context : String(context);
     const column = options?.column ?? toSnakeCase(property);
 
-    context.addInitializer(function (this: T) {
-      const constructor = (this as object).constructor;
-
-      // Get or create class metadata
-      let meta = classMeta.get(constructor);
-      if (!meta) {
-        meta = { table: "", fields: new Map() };
-        classMeta.set(constructor, meta);
-      }
-
-      // Skip if already registered (can happen with multiple instances)
-      if (meta.fields.has(property)) {
-        return;
-      }
-
-      // Get the default value from the instance
-      const value = (this as Record<string, unknown>)[property];
-
-      // Determine type
-      let type = options?.type;
-      if (!type) {
-        type = inferType(value);
-        if (!type) {
-          throw new Error(
-            `@Field on "${property}" has null default without explicit type. ` +
-              `Use @Field({ type: 'string' | 'number' | 'boolean' | 'date' }) to specify the type.`,
-          );
-        }
-      }
-
-      const fieldMeta: FieldMeta = { property, column, type };
-      meta.fields.set(property, fieldMeta);
-    });
+    // Accumulate field definitions
+    if (!globalPendingFields) {
+      globalPendingFields = new Map();
+    }
+    globalPendingFields.set(property, { column, type });
   };
 }

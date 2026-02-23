@@ -59,16 +59,21 @@ export class StateLoader {
     ensureTable(this.db, meta);
     migrateAdditive(this.db, meta);
 
-    // Try to load existing row
+    // Create instance to get default values
     const instance = new Cls();
+
+    // Try to load existing row
     const row = this.selectRow(meta, key);
 
     if (row) {
       // Populate instance from row
       for (const field of meta.fields.values()) {
         const rawValue = row[field.column];
-        const value = deserializeValue(rawValue, field.type);
-        (instance as Record<string, unknown>)[field.property] = value;
+        // If column is NULL (e.g., newly added via migration), keep default value
+        if (rawValue !== null && rawValue !== undefined) {
+          const value = deserializeValue(rawValue, field.type);
+          (instance as Record<string, unknown>)[field.property] = value;
+        }
       }
     } else {
       // Insert default values
@@ -150,8 +155,9 @@ export class StateLoader {
     meta: ClassMeta,
     key: string,
   ): T {
-    const loader = this;
     const saveKey = `${meta.table}:${key}`;
+    const scheduleSave = this.scheduleSave.bind(this);
+    const saveRow = this.saveRow.bind(this);
 
     return new Proxy(instance, {
       set(target, prop, value): boolean {
@@ -165,8 +171,8 @@ export class StateLoader {
         }
 
         // Schedule debounced save
-        loader.scheduleSave(saveKey, () => {
-          loader.saveRow(meta, key, target);
+        scheduleSave(saveKey, () => {
+          saveRow(meta, key, target);
         });
 
         return true;
