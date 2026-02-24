@@ -284,3 +284,51 @@ describe("proxy behavior", () => {
     expect(parsed.count).toBe(42);
   });
 });
+
+describe("StateLoader.exists", () => {
+  test("returns true when row exists", async () => {
+    // Create a row first
+    const state = loader.load(BasicState, "exists-key");
+    state.name = "test";
+    await loader.flush();
+
+    // Check if it exists
+    expect(loader.exists(BasicState, "exists-key")).toBe(true);
+  });
+
+  test("returns false when row does not exist", () => {
+    // Check for a key that was never created
+    expect(loader.exists(BasicState, "nonexistent-key")).toBe(false);
+  });
+
+  test("does not create a row", () => {
+    // Check exists for a key
+    const existsBefore = loader.exists(BasicState, "no-create-key");
+    expect(existsBefore).toBe(false);
+
+    // Verify no row was created
+    const row = getRow(db, "basic_state", "no-create-key");
+    expect(row).toBeNull();
+
+    // exists should still return false
+    expect(loader.exists(BasicState, "no-create-key")).toBe(false);
+  });
+
+  test("throws on undecorated class", () => {
+    expect(() => {
+      loader.exists(UndecoratedState, "key");
+    }).toThrow(/not decorated with @Persisted/);
+  });
+
+  test("ensures table exists", () => {
+    // Use a fresh loader and db to ensure table doesn't exist yet
+    const freshDb = createTestDb();
+    const freshLoader = new StateLoader(freshDb);
+
+    // exists() should not throw even though table doesn't exist
+    const result = freshLoader.exists(BasicState, "some-key");
+    expect(result).toBe(false);
+
+    freshDb.close();
+  });
+});

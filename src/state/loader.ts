@@ -35,6 +35,36 @@ export class StateLoader {
   }
 
   /**
+   * Check if a state row exists for the given key.
+   *
+   * Unlike `load()`, this does NOT create a row if it doesn't exist.
+   * Ensures table exists and migrates if needed (consistent with load()).
+   *
+   * @param Cls - The @Persisted class constructor
+   * @param key - Unique key to check
+   * @returns `true` if row exists, `false` otherwise
+   * @throws Error if class is not decorated with @Persisted
+   */
+  exists<T extends object>(Cls: new () => T, key: string): boolean {
+    // Get metadata
+    const meta = classMeta.get(Cls);
+    if (!meta || !meta.table) {
+      throw new Error(
+        `Class "${Cls.name}" is not decorated with @Persisted. ` +
+          `Add @Persisted('table_name') to the class.`,
+      );
+    }
+
+    // Ensure table exists and migrate if needed (consistent with load())
+    ensureTable(this.db, meta);
+    migrateAdditive(this.db, meta);
+
+    // Check if row exists
+    const row = this.selectRow(meta, key);
+    return row !== null;
+  }
+
+  /**
    * Load a state object by key.
    *
    * If the row doesn't exist, creates one with default values.
