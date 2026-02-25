@@ -12,6 +12,7 @@ import {
   CollectionEntity,
   type CollectionMeta,
   collectionMeta,
+  type FieldType,
   type FindOptions,
 } from "./collection/types";
 import {
@@ -351,6 +352,241 @@ export class StateLoader {
   }
 
   // --------------------------------------------------------------------------
+  // Bulk operations (for @PersistedCollection classes)
+  // --------------------------------------------------------------------------
+
+  /**
+   * Insert or replace an entity (upsert).
+   *
+   * If an entity with the same primary key exists, it will be replaced.
+   * Otherwise, a new row is inserted. Returns a bound entity with
+   * working save() and delete() methods.
+   *
+   * @param Cls - The @PersistedCollection class constructor
+   * @param data - Entity data including the @Id field
+   * @returns Bound entity instance with save() and delete() methods
+   * @throws Error if class is not decorated with @PersistedCollection
+   *
+   * @example
+   * ```ts
+   * const user = loader.upsert(User, { id: 'abc123', name: 'Alice' });
+   * // If user exists, it's updated; otherwise created
+   * ```
+   */
+  upsert<T extends CollectionEntity>(
+    Cls: new () => T,
+    data: Partial<Omit<T, "save" | "delete">>,
+  ): T {
+    const meta = this.getCollectionMeta(Cls);
+
+    // Ensure table and indices exist
+    ensureCollectionTable(this.db, meta);
+    migrateCollectionAdditive(this.db, meta);
+    ensureIndices(this.db, meta);
+
+    // Create instance and populate with data
+    const instance = new Cls();
+    Object.assign(instance, data);
+
+    // Upsert row
+    this.upsertCollectionRow(meta, instance);
+
+    // Return bound entity
+    return this.bindCollectionEntity(instance, meta);
+  }
+
+  /**
+   * Update multiple entities matching the given criteria.
+   *
+   * @param Cls - The @PersistedCollection class constructor
+   * @param where - Filter conditions to select rows to update
+   * @param updates - Partial data to apply to matching rows
+   * @returns Number of rows updated
+   * @throws Error if class is not decorated with @PersistedCollection
+   *
+   * @example
+   * ```ts
+   * const count = loader.updateWhere(User,
+   *   { status: 'pending' },
+   *   { status: 'active' }
+   * );
+   * console.log(`Updated ${count} users`);
+   * ```
+   */
+  updateWhere<T extends CollectionEntity>(
+    Cls: new () => T,
+    where: FindOptions<T>["where"],
+    updates: Partial<Omit<T, "save" | "delete">>,
+  ): number {
+    const meta = this.getCollectionMeta(Cls);
+
+    // Ensure table and indices exist
+    ensureCollectionTable(this.db, meta);
+    migrateCollectionAdditive(this.db, meta);
+    ensureIndices(this.db, meta);
+
+    // Build SET clause from updates
+    const setClauses: string[] = ["updated_at = datetime('now')"];
+    const setParams: SQLQueryBindings[] = [];
+
+    for (const [property, value] of Object.entries(updates)) {
+      if (value === undefined) {
+        continue;
+      }
+
+      // Get column name - check if it's the id field or a regular field
+      let column: string;
+      let fieldType: FieldType;
+
+      if (property === meta.idProperty) {
+        column = meta.idColumn;
+        fieldType = meta.idType;
+      } else {
+        const field = meta.fields.get(property);
+        if (!field) {
+          continue; // Skip unknown properties
+        }
+        column = field.column;
+        fieldType = field.type;
+      }
+
+      setClauses.push(`${column} = ?`);
+      setParams.push(serializeValue(value, fieldType));
+    }
+
+    // Build WHERE clause
+    const whereResult = buildWhere(meta, where);
+
+    // Build full SQL
+    let sql = `UPDATE ${meta.table} SET ${setClauses.join(", ")}`;
+    const params: SQLQueryBindings[] = [...setParams];
+
+    if (whereResult.sql) {
+      sql += ` WHERE ${whereResult.sql}`;
+      params.push(...whereResult.params);
+    }
+
+    // Execute query
+    const result = this.db.prepare(sql).run(...params);
+    return result.changes;
+  }
+
+  /**
+   * Delete multiple entities matching the given criteria.
+   *
+   * @param Cls - The @PersistedCollection class constructor
+   * @param where - Filter conditions to select rows to delete
+   * @returns Number of rows deleted
+   * @throws Error if class is not decorated with @PersistedCollection
+   *
+   * @example
+   * ```ts
+   * const count = loader.deleteWhere(User, { status: 'inactive' });
+   * console.log(`Deleted ${count} inactive users`);
+   * ```
+   */
+  deleteWhere<T extends CollectionEntity>(
+    Cls: new () => T,
+    where: FindOptions<T>["where"],
+  ): number {
+    const meta = this.getCollectionMeta(Cls);
+
+    // Ensure table and indices exist
+    ensureCollectionTable(this.db, meta);
+    migrateCollectionAdditive(this.db, meta);
+    ensureIndices(this.db, meta);
+
+    // Build WHERE clause
+    const whereResult = buildWhere(meta, where);
+
+    // Build full SQL
+    let sql = `DELETE FROM ${meta.table}`;
+    const params: SQLQueryBindings[] = [];
+
+    if (whereResult.sql) {
+      sql += ` WHERE ${whereResult.sql}`;
+      params.push(...whereResult.params);
+    }
+
+    // Execute query
+    const result = this.db.prepare(sql).run(...params);
+    return result.changes;
+  }
+
+  /**
+   * Execute a function within a database transaction.
+   *
+   * Uses BEGIN IMMEDIATE to acquire a write lock immediately, preventing
+   * other writers. If the function throws, the transaction is rolled back.
+   * Otherwise, it is committed.
+   *
+   * @param fn - The function to execute within the transaction
+   * @returns The return value of the function
+   * @throws Error if the function throws (transaction is rolled back)
+   *
+   * @example
+   * ```ts
+   * await loader.transaction(async () => {
+   *   const user = loader.get(User, 'abc123');
+   *   if (user) {
+   *     user.balance -= 100;
+   *     await user.save();
+   *   }
+   *   const order = loader.create(Order, { userId: 'abc123', amount: 100 });
+   * });
+   * ```
+   */
+  async transaction<T>(fn: () => T | Promise<T>): Promise<T> {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const result = await fn();
+      this.db.exec("COMMIT");
+      return result;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  /**
+   * Convenience method for single-entity sync updates with auto-save.
+   *
+   * Fetches an entity by ID, applies a synchronous update function,
+   * and automatically saves the entity. Throws if the entity is not found.
+   *
+   * @param Cls - The @PersistedCollection class constructor
+   * @param id - Primary key value
+   * @param fn - Synchronous function to modify the entity
+   * @returns The modified and saved entity
+   * @throws Error if entity is not found
+   *
+   * @example
+   * ```ts
+   * const user = await loader.modify(User, 'abc123', (user) => {
+   *   user.lastLogin = new Date();
+   *   user.loginCount += 1;
+   * });
+   * ```
+   */
+  async modify<T extends CollectionEntity>(
+    Cls: new () => T,
+    id: string | number,
+    fn: (entity: T) => void,
+  ): Promise<T> {
+    const entity = this.get(Cls, id);
+    if (!entity) {
+      throw new Error(
+        `Entity "${Cls.name}" with id "${id}" not found. ` +
+          `Use get() to check existence before calling modify().`,
+      );
+    }
+
+    fn(entity);
+    await entity.save();
+    return entity;
+  }
+
+  // --------------------------------------------------------------------------
   // Collection private helpers
   // --------------------------------------------------------------------------
 
@@ -392,6 +628,33 @@ export class StateLoader {
     }
 
     const sql = `INSERT INTO ${meta.table} (${columns.join(", ")}) VALUES (${placeholders.join(", ")})`;
+    this.db.prepare(sql).run(...values);
+  }
+
+  /**
+   * Insert or replace a collection entity row (upsert).
+   */
+  private upsertCollectionRow<T extends CollectionEntity>(
+    meta: CollectionMeta,
+    instance: T,
+  ): void {
+    const columns: string[] = [meta.idColumn, "created_at", "updated_at"];
+    const placeholders: string[] = ["?", "datetime('now')", "datetime('now')"];
+    const values: SQLQueryBindings[] = [
+      (instance as Record<string, unknown>)[
+        meta.idProperty
+      ] as SQLQueryBindings,
+    ];
+
+    // Add all field columns
+    for (const field of meta.fields.values()) {
+      columns.push(field.column);
+      placeholders.push("?");
+      const value = (instance as Record<string, unknown>)[field.property];
+      values.push(serializeValue(value, field.type));
+    }
+
+    const sql = `INSERT OR REPLACE INTO ${meta.table} (${columns.join(", ")}) VALUES (${placeholders.join(", ")})`;
     this.db.prepare(sql).run(...values);
   }
 
