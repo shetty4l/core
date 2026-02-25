@@ -112,6 +112,38 @@ describe("StateLoader.upsert", () => {
     expect(loader.count(BulkItem)).toBe(1);
     expect(loader.get(BulkItem, "i1")!.name).toBe("V3");
   });
+
+  test("preserves created_at on upsert update", () => {
+    // Create initial entity to ensure table exists
+    loader.create(BulkItem, { id: "setup", name: "Setup" });
+
+    // Insert a row with a known old created_at timestamp
+    const oldTimestamp = "2020-01-01 00:00:00";
+    db.exec(`
+      INSERT INTO bulk_items (id, name, status, quantity, created_at, updated_at)
+      VALUES ('i1', 'Original', 'pending', 0, '${oldTimestamp}', '${oldTimestamp}')
+    `);
+
+    // Upsert the same entity with new data
+    loader.upsert(BulkItem, { id: "i1", name: "Updated", quantity: 5 });
+
+    // Verify created_at is preserved but data and updated_at changed
+    const row = db
+      .prepare(
+        "SELECT created_at, updated_at, name, quantity FROM bulk_items WHERE id = ?",
+      )
+      .get("i1") as {
+      created_at: string;
+      updated_at: string;
+      name: string;
+      quantity: number;
+    };
+
+    expect(row.name).toBe("Updated");
+    expect(row.quantity).toBe(5);
+    expect(row.created_at).toBe(oldTimestamp); // Preserved!
+    expect(row.updated_at).not.toBe(oldTimestamp); // Updated to now
+  });
 });
 
 // --------------------------------------------------------------------------
