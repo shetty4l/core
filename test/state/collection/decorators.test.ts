@@ -255,4 +255,28 @@ describe("@Field (collection)", () => {
     expect(meta!.fields.get("bool")!.type).toBe("boolean");
     expect(meta!.fields.get("dt")!.type).toBe("date");
   });
+
+  test("throws on reserved field name created_at", () => {
+    expect(() => {
+      @PersistedCollection("reserved_created_at")
+      class _ReservedCreatedAt extends CollectionEntity {
+        @Id() id: string = "";
+        @Field("date") override created_at: Date = new Date(0);
+        async save(): Promise<void> {}
+        async delete(): Promise<void> {}
+      }
+    }).toThrow(/created_at.*reserved for auto-managed timestamps/);
+  });
+
+  test("throws on reserved field name updated_at", () => {
+    expect(() => {
+      @PersistedCollection("reserved_updated_at")
+      class _ReservedUpdatedAt extends CollectionEntity {
+        @Id() id: string = "";
+        @Field("date") override updated_at: Date = new Date(0);
+        async save(): Promise<void> {}
+        async delete(): Promise<void> {}
+      }
+    }).toThrow(/updated_at.*reserved for auto-managed timestamps/);
+  });
 });

@@ -128,6 +128,10 @@ export interface FindOptions<T> {
  * from singleton @Persisted classes. Subclasses must be decorated with
  * @PersistedCollection.
  *
+ * Auto-managed timestamps (`created_at`, `updated_at`) are populated when
+ * entities are loaded from the database. These are read-only and cannot be
+ * set via @Field decorators.
+ *
  * @example
  * ```ts
  * @PersistedCollection('users')
@@ -143,9 +147,34 @@ export interface FindOptions<T> {
  *     // Implemented by StateLoader binding
  *   }
  * }
+ *
+ * // Usage: timestamps are available after load
+ * const user = loader.get(User, 'abc123');
+ * console.log(user.created_at); // Date when entity was created
+ * console.log(user.updated_at); // Date when entity was last modified
+ *
+ * // Query by timestamps
+ * const recent = loader.find(User, {
+ *   where: { updated_at: { op: 'gte', value: yesterday } },
+ *   orderBy: { created_at: 'desc' }
+ * });
  * ```
  */
 export abstract class CollectionEntity {
+  /**
+   * Timestamp when this entity was first created.
+   * Auto-managed by StateLoader; populated on load.
+   * Default value before population is epoch (1970-01-01).
+   */
+  readonly created_at: Date = new Date(0);
+
+  /**
+   * Timestamp when this entity was last modified.
+   * Auto-managed by StateLoader; updated on every save().
+   * Default value before population is epoch (1970-01-01).
+   */
+  readonly updated_at: Date = new Date(0);
+
   /**
    * Persist this entity to the database.
    * Implemented when the entity is bound to a StateLoader.

@@ -753,6 +753,19 @@ export class StateLoader {
         (instance as Record<string, unknown>)[field.property] = value;
       }
     }
+
+    // Set auto-managed timestamps
+    const rawCreatedAt = row.created_at;
+    if (rawCreatedAt !== null && rawCreatedAt !== undefined) {
+      const createdAtValue = deserializeValue(rawCreatedAt, "date");
+      (instance as Record<string, unknown>).created_at = createdAtValue;
+    }
+
+    const rawUpdatedAt = row.updated_at;
+    if (rawUpdatedAt !== null && rawUpdatedAt !== undefined) {
+      const updatedAtValue = deserializeValue(rawUpdatedAt, "date");
+      (instance as Record<string, unknown>).updated_at = updatedAtValue;
+    }
   }
 
   /**
