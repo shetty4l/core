@@ -238,6 +238,24 @@ describe("StateLoader.updateWhere", () => {
     expect(row.updated_at).toBeDefined();
     expect(new Date(row.updated_at).getTime()).not.toBeNaN();
   });
+
+  test("throws when no where clause to prevent accidental bulk update", () => {
+    expect(() =>
+      loader.updateWhere(BulkItem, undefined, { status: "changed" }),
+    ).toThrow(/requires at least one WHERE condition/);
+    // All items should be unchanged
+    const items = loader.find(BulkItem, { where: { status: "pending" } });
+    expect(items).toHaveLength(2);
+  });
+
+  test("throws with empty where object to prevent accidental bulk update", () => {
+    expect(() =>
+      loader.updateWhere(BulkItem, {}, { status: "changed" }),
+    ).toThrow(/requires at least one WHERE condition/);
+    // All items should be unchanged
+    const items = loader.find(BulkItem, { where: { status: "pending" } });
+    expect(items).toHaveLength(2);
+  });
 });
 
 // --------------------------------------------------------------------------
@@ -278,18 +296,20 @@ describe("StateLoader.deleteWhere", () => {
     expect(loader.get(BulkItem, "i3")).not.toBeNull();
   });
 
-  test("deletes all when no where clause", () => {
-    const count = loader.deleteWhere(BulkItem, undefined);
-
-    expect(count).toBe(3);
-    expect(loader.count(BulkItem)).toBe(0);
+  test("throws when no where clause to prevent accidental bulk delete", () => {
+    expect(() => loader.deleteWhere(BulkItem, undefined)).toThrow(
+      /requires at least one WHERE condition/,
+    );
+    // All items should still exist
+    expect(loader.count(BulkItem)).toBe(3);
   });
 
-  test("deletes all with empty where object", () => {
-    const count = loader.deleteWhere(BulkItem, {});
-
-    expect(count).toBe(3);
-    expect(loader.count(BulkItem)).toBe(0);
+  test("throws with empty where object to prevent accidental bulk delete", () => {
+    expect(() => loader.deleteWhere(BulkItem, {})).toThrow(
+      /requires at least one WHERE condition/,
+    );
+    // All items should still exist
+    expect(loader.count(BulkItem)).toBe(3);
   });
 });
 

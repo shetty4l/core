@@ -64,6 +64,14 @@ export class StateLoader {
   exists<T extends CollectionEntity>(Cls: new () => T, key: string): never;
   exists<T extends object>(Cls: new () => T, key: string): boolean;
   exists<T extends object>(Cls: new () => T, key: string): boolean {
+    // Runtime check: CollectionEntity classes should use get() instead
+    if (collectionMeta.has(Cls)) {
+      throw new Error(
+        `Class "${Cls.name}" is a @PersistedCollection. ` +
+          `Use get() or find() instead of exists().`,
+      );
+    }
+
     // Get metadata
     const meta = classMeta.get(Cls);
     if (!meta || !meta.table) {
@@ -97,6 +105,14 @@ export class StateLoader {
   load<T extends CollectionEntity>(Cls: new () => T, key: string): never;
   load<T extends object>(Cls: new () => T, key: string): T;
   load<T extends object>(Cls: new () => T, key: string): T {
+    // Runtime check: CollectionEntity classes should use get() instead
+    if (collectionMeta.has(Cls)) {
+      throw new Error(
+        `Class "${Cls.name}" is a @PersistedCollection. ` +
+          `Use get() or find() instead of load().`,
+      );
+    }
+
     // Get metadata
     const meta = classMeta.get(Cls);
     if (!meta || !meta.table) {
@@ -457,14 +473,17 @@ export class StateLoader {
     // Build WHERE clause
     const whereResult = buildWhere(meta, where);
 
-    // Build full SQL
-    let sql = `UPDATE ${meta.table} SET ${setClauses.join(", ")}`;
-    const params: SQLQueryBindings[] = [...setParams];
-
-    if (whereResult.sql) {
-      sql += ` WHERE ${whereResult.sql}`;
-      params.push(...whereResult.params);
+    // Require at least one WHERE condition to prevent accidental bulk updates
+    if (!whereResult.sql) {
+      throw new Error(
+        `updateWhere() requires at least one WHERE condition. ` +
+          `Pass a non-empty filter to prevent accidental bulk updates.`,
+      );
     }
+
+    // Build full SQL
+    const sql = `UPDATE ${meta.table} SET ${setClauses.join(", ")} WHERE ${whereResult.sql}`;
+    const params: SQLQueryBindings[] = [...setParams, ...whereResult.params];
 
     // Execute query
     const result = this.db.prepare(sql).run(...params);
@@ -499,14 +518,17 @@ export class StateLoader {
     // Build WHERE clause
     const whereResult = buildWhere(meta, where);
 
-    // Build full SQL
-    let sql = `DELETE FROM ${meta.table}`;
-    const params: SQLQueryBindings[] = [];
-
-    if (whereResult.sql) {
-      sql += ` WHERE ${whereResult.sql}`;
-      params.push(...whereResult.params);
+    // Require at least one WHERE condition to prevent accidental bulk deletes
+    if (!whereResult.sql) {
+      throw new Error(
+        `deleteWhere() requires at least one WHERE condition. ` +
+          `Pass a non-empty filter to prevent accidental bulk deletes.`,
+      );
     }
+
+    // Build full SQL
+    const sql = `DELETE FROM ${meta.table} WHERE ${whereResult.sql}`;
+    const params: SQLQueryBindings[] = [...whereResult.params];
 
     // Execute query
     const result = this.db.prepare(sql).run(...params);
