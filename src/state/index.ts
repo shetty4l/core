@@ -65,8 +65,14 @@ export { Field, Persisted } from "./decorators";
 
 /** Mark a class as a persisted collection (multi-row table). */
 /** Mark a property as the primary key field. */
+/** Mark a property as a persisted field in a collection (use with @PersistedCollection). */
 /** Mark column(s) for indexing. */
-export { Id, Index, PersistedCollection } from "./collection/decorators";
+export {
+  Field as CollectionField,
+  Id,
+  Index,
+  PersistedCollection,
+} from "./collection/decorators";
 
 // --------------------------------------------------------------------------
 // Collection base class
