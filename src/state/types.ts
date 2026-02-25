@@ -28,3 +28,6 @@ export interface ClassMeta {
  * Keyed by constructor function, holds ClassMeta.
  */
 export const classMeta = new WeakMap<object, ClassMeta>();
+
+// Re-export collection metadata for convenience
+export { collectionMeta } from "./collection/types";
