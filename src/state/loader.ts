@@ -2,11 +2,25 @@
  * StateLoader: Load and auto-persist state objects.
  *
  * Provides a proxy-based approach to automatically save state changes
- * to SQLite with debounced writes.
+ * to SQLite with debounced writes. Supports both singleton @Persisted
+ * classes and multi-row @PersistedCollection classes.
  */
 
 import type { Database, SQLQueryBindings } from "bun:sqlite";
-import { ensureTable, migrateAdditive } from "./schema";
+import { buildOrderBy, buildWhere } from "./collection/query";
+import {
+  CollectionEntity,
+  type CollectionMeta,
+  collectionMeta,
+  type FindOptions,
+} from "./collection/types";
+import {
+  ensureCollectionTable,
+  ensureIndices,
+  ensureTable,
+  migrateAdditive,
+  migrateCollectionAdditive,
+} from "./schema";
 import { deserializeValue, serializeValue } from "./serialization";
 import type { ClassMeta } from "./types";
 import { classMeta } from "./types";
@@ -44,7 +58,10 @@ export class StateLoader {
    * @param key - Unique key to check
    * @returns `true` if row exists, `false` otherwise
    * @throws Error if class is not decorated with @Persisted
+   * @throws Error (compile-time) if class extends CollectionEntity
    */
+  exists<T extends CollectionEntity>(Cls: new () => T, key: string): never;
+  exists<T extends object>(Cls: new () => T, key: string): boolean;
   exists<T extends object>(Cls: new () => T, key: string): boolean {
     // Get metadata
     const meta = classMeta.get(Cls);
@@ -74,7 +91,10 @@ export class StateLoader {
    * @param key - Unique key for this state instance
    * @returns Proxied instance that auto-saves changes
    * @throws Error if class is not decorated with @Persisted
+   * @throws Error (compile-time) if class extends CollectionEntity
    */
+  load<T extends CollectionEntity>(Cls: new () => T, key: string): never;
+  load<T extends object>(Cls: new () => T, key: string): T;
   load<T extends object>(Cls: new () => T, key: string): T {
     // Get metadata
     const meta = classMeta.get(Cls);
@@ -132,6 +152,342 @@ export class StateLoader {
     }
     this.pendingSaves.clear();
   }
+
+  // --------------------------------------------------------------------------
+  // Collection methods (for @PersistedCollection classes)
+  // --------------------------------------------------------------------------
+
+  /**
+   * Create a new collection entity and persist it.
+   *
+   * Inserts a new row into the collection table. The entity's @Id field
+   * must be set before calling create(). Returns a bound entity with
+   * working save() and delete() methods.
+   *
+   * @param Cls - The @PersistedCollection class constructor
+   * @param data - Partial entity data to initialize with
+   * @returns Bound entity instance with save() and delete() methods
+   * @throws Error if class is not decorated with @PersistedCollection
+   * @throws Error if INSERT fails (e.g., duplicate primary key)
+   *
+   * @example
+   * ```ts
+   * const user = await loader.create(User, { id: 'abc123', name: 'Alice' });
+   * user.name = 'Alicia';
+   * await user.save();
+   * ```
+   */
+  create<T extends CollectionEntity>(
+    Cls: new () => T,
+    data: Partial<Omit<T, "save" | "delete">>,
+  ): T {
+    const meta = this.getCollectionMeta(Cls);
+
+    // Ensure table and indices exist
+    ensureCollectionTable(this.db, meta);
+    migrateCollectionAdditive(this.db, meta);
+    ensureIndices(this.db, meta);
+
+    // Create instance and populate with data
+    const instance = new Cls();
+    Object.assign(instance, data);
+
+    // Insert row
+    this.insertCollectionRow(meta, instance);
+
+    // Return bound entity
+    return this.bindCollectionEntity(instance, meta);
+  }
+
+  /**
+   * Get a single entity by its primary key.
+   *
+   * @param Cls - The @PersistedCollection class constructor
+   * @param id - Primary key value
+   * @returns Bound entity instance or null if not found
+   * @throws Error if class is not decorated with @PersistedCollection
+   *
+   * @example
+   * ```ts
+   * const user = loader.get(User, 'abc123');
+   * if (user) {
+   *   console.log(user.name);
+   * }
+   * ```
+   */
+  get<T extends CollectionEntity>(
+    Cls: new () => T,
+    id: string | number,
+  ): T | null {
+    const meta = this.getCollectionMeta(Cls);
+
+    // Ensure table and indices exist
+    ensureCollectionTable(this.db, meta);
+    migrateCollectionAdditive(this.db, meta);
+    ensureIndices(this.db, meta);
+
+    // Query by primary key
+    const sql = `SELECT * FROM ${meta.table} WHERE ${meta.idColumn} = ?`;
+    const row = this.db.prepare(sql).get(id) as Record<string, unknown> | null;
+
+    if (!row) {
+      return null;
+    }
+
+    // Create instance and populate from row
+    const instance = new Cls();
+    this.populateCollectionInstance(instance, meta, row);
+
+    return this.bindCollectionEntity(instance, meta);
+  }
+
+  /**
+   * Find entities matching the given criteria.
+   *
+   * @param Cls - The @PersistedCollection class constructor
+   * @param options - Query options (where, orderBy, limit, offset)
+   * @returns Array of bound entity instances
+   * @throws Error if class is not decorated with @PersistedCollection
+   *
+   * @example
+   * ```ts
+   * const users = loader.find(User, {
+   *   where: { status: 'active', age: { op: 'gte', value: 18 } },
+   *   orderBy: { createdAt: 'desc' },
+   *   limit: 10,
+   * });
+   * ```
+   */
+  find<T extends CollectionEntity>(
+    Cls: new () => T,
+    options?: FindOptions<T>,
+  ): T[] {
+    const meta = this.getCollectionMeta(Cls);
+
+    // Ensure table and indices exist
+    ensureCollectionTable(this.db, meta);
+    migrateCollectionAdditive(this.db, meta);
+    ensureIndices(this.db, meta);
+
+    // Build query
+    let sql = `SELECT * FROM ${meta.table}`;
+    const params: SQLQueryBindings[] = [];
+
+    // WHERE clause
+    const whereResult = buildWhere(meta, options?.where);
+    if (whereResult.sql) {
+      sql += ` WHERE ${whereResult.sql}`;
+      params.push(...whereResult.params);
+    }
+
+    // ORDER BY clause
+    const orderBySql = buildOrderBy(meta, options?.orderBy);
+    if (orderBySql) {
+      sql += ` ORDER BY ${orderBySql}`;
+    }
+
+    // LIMIT and OFFSET
+    if (options?.limit !== undefined) {
+      sql += ` LIMIT ?`;
+      params.push(options.limit);
+    }
+    if (options?.offset !== undefined) {
+      sql += ` OFFSET ?`;
+      params.push(options.offset);
+    }
+
+    // Execute query
+    const rows = this.db.prepare(sql).all(...params) as Record<
+      string,
+      unknown
+    >[];
+
+    // Map rows to bound entities
+    return rows.map((row) => {
+      const instance = new Cls();
+      this.populateCollectionInstance(instance, meta, row);
+      return this.bindCollectionEntity(instance, meta);
+    });
+  }
+
+  /**
+   * Count entities matching the given criteria.
+   *
+   * @param Cls - The @PersistedCollection class constructor
+   * @param where - Optional filter conditions
+   * @returns Number of matching entities
+   * @throws Error if class is not decorated with @PersistedCollection
+   *
+   * @example
+   * ```ts
+   * const activeCount = loader.count(User, { status: 'active' });
+   * ```
+   */
+  count<T extends CollectionEntity>(
+    Cls: new () => T,
+    where?: FindOptions<T>["where"],
+  ): number {
+    const meta = this.getCollectionMeta(Cls);
+
+    // Ensure table and indices exist
+    ensureCollectionTable(this.db, meta);
+    migrateCollectionAdditive(this.db, meta);
+    ensureIndices(this.db, meta);
+
+    // Build query
+    let sql = `SELECT COUNT(*) as count FROM ${meta.table}`;
+    const params: SQLQueryBindings[] = [];
+
+    // WHERE clause
+    const whereResult = buildWhere(meta, where);
+    if (whereResult.sql) {
+      sql += ` WHERE ${whereResult.sql}`;
+      params.push(...whereResult.params);
+    }
+
+    // Execute query
+    const result = this.db.prepare(sql).get(...params) as { count: number };
+    return result.count;
+  }
+
+  // --------------------------------------------------------------------------
+  // Collection private helpers
+  // --------------------------------------------------------------------------
+
+  /**
+   * Get collection metadata for a class, ensuring it's properly decorated.
+   */
+  private getCollectionMeta(Cls: new () => CollectionEntity): CollectionMeta {
+    const meta = collectionMeta.get(Cls);
+    if (!meta) {
+      throw new Error(
+        `Class "${Cls.name}" is not decorated with @PersistedCollection. ` +
+          `Add @PersistedCollection('table_name') to the class.`,
+      );
+    }
+    return meta;
+  }
+
+  /**
+   * Insert a new collection entity row.
+   */
+  private insertCollectionRow<T extends CollectionEntity>(
+    meta: CollectionMeta,
+    instance: T,
+  ): void {
+    const columns: string[] = [meta.idColumn, "created_at", "updated_at"];
+    const placeholders: string[] = ["?", "datetime('now')", "datetime('now')"];
+    const values: SQLQueryBindings[] = [
+      (instance as Record<string, unknown>)[
+        meta.idProperty
+      ] as SQLQueryBindings,
+    ];
+
+    // Add all field columns
+    for (const field of meta.fields.values()) {
+      columns.push(field.column);
+      placeholders.push("?");
+      const value = (instance as Record<string, unknown>)[field.property];
+      values.push(serializeValue(value, field.type));
+    }
+
+    const sql = `INSERT INTO ${meta.table} (${columns.join(", ")}) VALUES (${placeholders.join(", ")})`;
+    this.db.prepare(sql).run(...values);
+  }
+
+  /**
+   * Save (update) an existing collection entity row.
+   */
+  private saveCollectionRow<T extends CollectionEntity>(
+    meta: CollectionMeta,
+    instance: T,
+  ): void {
+    const setClauses: string[] = ["updated_at = datetime('now')"];
+    const values: SQLQueryBindings[] = [];
+
+    // Add all field columns
+    for (const field of meta.fields.values()) {
+      setClauses.push(`${field.column} = ?`);
+      const value = (instance as Record<string, unknown>)[field.property];
+      values.push(serializeValue(value, field.type));
+    }
+
+    // Add id value for WHERE clause
+    const idValue = (instance as Record<string, unknown>)[
+      meta.idProperty
+    ] as SQLQueryBindings;
+    values.push(idValue);
+
+    const sql = `UPDATE ${meta.table} SET ${setClauses.join(", ")} WHERE ${meta.idColumn} = ?`;
+    this.db.prepare(sql).run(...values);
+  }
+
+  /**
+   * Delete a collection entity row.
+   */
+  private deleteCollectionRow<T extends CollectionEntity>(
+    meta: CollectionMeta,
+    instance: T,
+  ): void {
+    const idValue = (instance as Record<string, unknown>)[
+      meta.idProperty
+    ] as SQLQueryBindings;
+    const sql = `DELETE FROM ${meta.table} WHERE ${meta.idColumn} = ?`;
+    this.db.prepare(sql).run(idValue);
+  }
+
+  /**
+   * Populate a collection instance from a database row.
+   */
+  private populateCollectionInstance<T extends CollectionEntity>(
+    instance: T,
+    meta: CollectionMeta,
+    row: Record<string, unknown>,
+  ): void {
+    // Set id field
+    const rawId = row[meta.idColumn];
+    if (rawId !== null && rawId !== undefined) {
+      const idValue = deserializeValue(rawId, meta.idType);
+      (instance as Record<string, unknown>)[meta.idProperty] = idValue;
+    }
+
+    // Set all other fields
+    for (const field of meta.fields.values()) {
+      const rawValue = row[field.column];
+      if (rawValue !== null && rawValue !== undefined) {
+        const value = deserializeValue(rawValue, field.type);
+        (instance as Record<string, unknown>)[field.property] = value;
+      }
+    }
+  }
+
+  /**
+   * Bind save() and delete() methods to a collection entity.
+   */
+  private bindCollectionEntity<T extends CollectionEntity>(
+    instance: T,
+    meta: CollectionMeta,
+  ): T {
+    const saveRow = this.saveCollectionRow.bind(this);
+    const deleteRow = this.deleteCollectionRow.bind(this);
+
+    // Override abstract methods with concrete implementations
+    (instance as unknown as { save: () => Promise<void> }).save =
+      async function (): Promise<void> {
+        saveRow(meta, instance);
+      };
+
+    (instance as unknown as { delete: () => Promise<void> }).delete =
+      async function (): Promise<void> {
+        deleteRow(meta, instance);
+      };
+
+    return instance;
+  }
+
+  // --------------------------------------------------------------------------
+  // Singleton private helpers
+  // --------------------------------------------------------------------------
 
   private selectRow(
     meta: ClassMeta,
