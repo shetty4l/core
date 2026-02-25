@@ -50,14 +50,33 @@ function getColumn(meta: CollectionMeta, property: string): string {
     return meta.idColumn;
   }
 
+  // Handle auto-managed timestamp fields
+  if (property === "created_at") {
+    return "created_at";
+  }
+  if (property === "updated_at") {
+    return "updated_at";
+  }
+
   const field = meta.fields.get(property);
   if (!field) {
     throw new Error(
       `Property "${property}" not found in collection "${meta.table}". ` +
-        `Available fields: ${meta.idProperty}, ${[...meta.fields.keys()].join(", ")}`,
+        `Available fields: ${meta.idProperty}, ${[...meta.fields.keys()].join(", ")}, created_at, updated_at`,
     );
   }
   return field.column;
+}
+
+/**
+ * Serialize a value for SQL binding.
+ * Converts Date objects to ISO strings, passes other values through.
+ */
+function serializeBindValue(value: unknown): SQLQueryBindings {
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  return value as SQLQueryBindings;
 }
 
 /**
@@ -75,41 +94,47 @@ function buildOperatorCondition(
 ): { sql: string; params: SQLQueryBindings[] } {
   switch (op) {
     case "eq":
-      return { sql: `${column} = ?`, params: [value as SQLQueryBindings] };
+      return { sql: `${column} = ?`, params: [serializeBindValue(value)] };
 
     case "neq":
-      return { sql: `${column} != ?`, params: [value as SQLQueryBindings] };
+      return { sql: `${column} != ?`, params: [serializeBindValue(value)] };
 
     case "lt":
-      return { sql: `${column} < ?`, params: [value as SQLQueryBindings] };
+      return { sql: `${column} < ?`, params: [serializeBindValue(value)] };
 
     case "lte":
-      return { sql: `${column} <= ?`, params: [value as SQLQueryBindings] };
+      return { sql: `${column} <= ?`, params: [serializeBindValue(value)] };
 
     case "gt":
-      return { sql: `${column} > ?`, params: [value as SQLQueryBindings] };
+      return { sql: `${column} > ?`, params: [serializeBindValue(value)] };
 
     case "gte":
-      return { sql: `${column} >= ?`, params: [value as SQLQueryBindings] };
+      return { sql: `${column} >= ?`, params: [serializeBindValue(value)] };
 
     case "in": {
-      const arr = value as SQLQueryBindings[];
+      const arr = value as unknown[];
       if (!Array.isArray(arr) || arr.length === 0) {
         // Empty IN clause: always false
         return { sql: "0 = 1", params: [] };
       }
       const placeholders = arr.map(() => "?").join(", ");
-      return { sql: `${column} IN (${placeholders})`, params: arr };
+      return {
+        sql: `${column} IN (${placeholders})`,
+        params: arr.map(serializeBindValue),
+      };
     }
 
     case "notIn": {
-      const arr = value as SQLQueryBindings[];
+      const arr = value as unknown[];
       if (!Array.isArray(arr) || arr.length === 0) {
         // Empty NOT IN clause: always true (no exclusions)
         return { sql: "1 = 1", params: [] };
       }
       const placeholders = arr.map(() => "?").join(", ");
-      return { sql: `${column} NOT IN (${placeholders})`, params: arr };
+      return {
+        sql: `${column} NOT IN (${placeholders})`,
+        params: arr.map(serializeBindValue),
+      };
     }
 
     case "isNull":

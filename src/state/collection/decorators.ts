@@ -192,10 +192,21 @@ export function Id(type: FieldType = "string", options?: IdOptions) {
  *
  * @param type - The field type ('string' | 'number' | 'boolean' | 'date')
  * @param options - Optional field configuration (column name override)
+ * @throws Error if property name is a reserved timestamp field (created_at, updated_at)
  */
 export function Field(type: FieldType, options?: FieldOptions) {
   return function (_target: undefined, context: unknown): void {
     const property = extractPropertyName(context);
+
+    // Reject reserved timestamp field names
+    if (property === "created_at" || property === "updated_at") {
+      resetGlobalState();
+      throw new Error(
+        `"${property}" is reserved for auto-managed timestamps. ` +
+          `Remove the @Field decorator - timestamps are automatically populated by StateLoader.`,
+      );
+    }
+
     const column = options?.column ?? toSnakeCase(property);
 
     // Accumulate field definitions

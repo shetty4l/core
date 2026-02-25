@@ -531,3 +531,131 @@ describe("StateLoader runtime safety", () => {
     }).toThrow(/is a @PersistedCollection.*Use get\(\) or find\(\)/);
   });
 });
+
+// --------------------------------------------------------------------------
+// Timestamp tests
+// --------------------------------------------------------------------------
+
+describe("CollectionEntity timestamps", () => {
+  test("entity has timestamps populated after create()", () => {
+    const user = loader.create(LoaderUser, { id: "u1", name: "Alice" });
+
+    // Timestamps should be populated from database after create
+    const fetched = loader.get(LoaderUser, "u1")!;
+    expect(fetched.created_at).toBeInstanceOf(Date);
+    expect(fetched.updated_at).toBeInstanceOf(Date);
+    expect(fetched.created_at.getTime()).toBeGreaterThan(0);
+    expect(fetched.updated_at.getTime()).toBeGreaterThan(0);
+  });
+
+  test("updated_at changes after save()", async () => {
+    const user = loader.create(LoaderUser, { id: "u1", name: "Alice" });
+
+    // Get initial timestamps from database
+    const initialRow = db
+      .prepare("SELECT created_at, updated_at FROM loader_users WHERE id = ?")
+      .get("u1") as { created_at: string; updated_at: string };
+    const initialUpdatedAt = new Date(initialRow.updated_at).getTime();
+
+    // Wait at least 1 second to ensure datetime('now') changes
+    // SQLite datetime('now') has second-level granularity
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+
+    // Update and save
+    user.name = "Alicia";
+    await user.save();
+
+    // Get updated timestamps
+    const updatedRow = db
+      .prepare("SELECT created_at, updated_at FROM loader_users WHERE id = ?")
+      .get("u1") as { created_at: string; updated_at: string };
+    const newUpdatedAt = new Date(updatedRow.updated_at).getTime();
+
+    expect(newUpdatedAt).toBeGreaterThan(initialUpdatedAt);
+  });
+
+  test("created_at stays same after save()", async () => {
+    const user = loader.create(LoaderUser, { id: "u1", name: "Alice" });
+
+    // Get initial created_at
+    const initialRow = db
+      .prepare("SELECT created_at FROM loader_users WHERE id = ?")
+      .get("u1") as { created_at: string };
+    const initialCreatedAt = initialRow.created_at;
+
+    // Update and save
+    user.name = "Alicia";
+    await user.save();
+
+    // Verify created_at unchanged
+    const updatedRow = db
+      .prepare("SELECT created_at FROM loader_users WHERE id = ?")
+      .get("u1") as { created_at: string };
+    expect(updatedRow.created_at).toBe(initialCreatedAt);
+  });
+
+  test("can query by updated_at with operators", () => {
+    // Create some test data
+    loader.create(LoaderUser, { id: "u1", name: "Alice" });
+    loader.create(LoaderUser, { id: "u2", name: "Bob" });
+
+    // Query for entities updated after epoch
+    const users = loader.find(LoaderUser, {
+      where: { updated_at: { op: "gte", value: new Date(0) } },
+    });
+
+    expect(users).toHaveLength(2);
+  });
+
+  test("can order by created_at", () => {
+    // Create entities - they should be ordered by created_at
+    // Since created_at has second granularity and may be same,
+    // we test ordering falls back to consistent behavior
+    loader.create(LoaderUser, { id: "u1", name: "First" });
+    loader.create(LoaderUser, { id: "u2", name: "Second" });
+    loader.create(LoaderUser, { id: "u3", name: "Third" });
+
+    // Order by created_at asc - should return consistent results
+    const usersAsc = loader.find(LoaderUser, {
+      orderBy: { created_at: "asc" },
+    });
+    expect(usersAsc).toHaveLength(3);
+    // All should have valid created_at timestamps
+    for (const user of usersAsc) {
+      expect(user.created_at).toBeInstanceOf(Date);
+      expect(user.created_at.getTime()).toBeGreaterThan(0);
+    }
+
+    // Order by created_at desc - should return consistent results in reverse
+    const usersDesc = loader.find(LoaderUser, {
+      orderBy: { created_at: "desc" },
+    });
+    expect(usersDesc).toHaveLength(3);
+    // Check timestamps are populated
+    for (const user of usersDesc) {
+      expect(user.created_at).toBeInstanceOf(Date);
+      expect(user.created_at.getTime()).toBeGreaterThan(0);
+    }
+  });
+
+  test("timestamps are readonly Date properties with default epoch", () => {
+    // CollectionEntity base class should have default values
+    @PersistedCollection("timestamp_default_test")
+    class TimestampDefaultTest extends CollectionEntity {
+      @Id() id: string = "";
+      async save(): Promise<void> {
+        throw new Error("Not bound");
+      }
+      async delete(): Promise<void> {
+        throw new Error("Not bound");
+      }
+    }
+
+    // Create instance without loading from DB - should have epoch default
+    const instance = new TimestampDefaultTest();
+    expect(instance.created_at).toBeInstanceOf(Date);
+    expect(instance.updated_at).toBeInstanceOf(Date);
+    expect(instance.created_at.getTime()).toBe(0);
+    expect(instance.updated_at.getTime()).toBe(0);
+  });
+});
