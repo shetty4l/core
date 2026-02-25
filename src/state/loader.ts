@@ -633,6 +633,7 @@ export class StateLoader {
 
   /**
    * Insert or replace a collection entity row (upsert).
+   * Uses ON CONFLICT to preserve created_at on updates.
    */
   private upsertCollectionRow<T extends CollectionEntity>(
     meta: CollectionMeta,
@@ -646,15 +647,23 @@ export class StateLoader {
       ] as SQLQueryBindings,
     ];
 
+    // Build update clauses for ON CONFLICT (excludes id and created_at)
+    const updateClauses: string[] = ["updated_at = datetime('now')"];
+
     // Add all field columns
     for (const field of meta.fields.values()) {
       columns.push(field.column);
       placeholders.push("?");
       const value = (instance as Record<string, unknown>)[field.property];
       values.push(serializeValue(value, field.type));
+      updateClauses.push(`${field.column} = excluded.${field.column}`);
     }
 
-    const sql = `INSERT OR REPLACE INTO ${meta.table} (${columns.join(", ")}) VALUES (${placeholders.join(", ")})`;
+    // Use INSERT ... ON CONFLICT to preserve created_at on update
+    const sql =
+      `INSERT INTO ${meta.table} (${columns.join(", ")}) ` +
+      `VALUES (${placeholders.join(", ")}) ` +
+      `ON CONFLICT(${meta.idColumn}) DO UPDATE SET ${updateClauses.join(", ")}`;
     this.db.prepare(sql).run(...values);
   }
 
