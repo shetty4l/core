@@ -507,3 +507,27 @@ describe("collection edge cases", () => {
     expect(new Date(row.updated_at).getTime()).not.toBeNaN();
   });
 });
+
+// --------------------------------------------------------------------------
+// Runtime safety checks
+// --------------------------------------------------------------------------
+
+describe("StateLoader runtime safety", () => {
+  test("load() throws for @PersistedCollection classes", () => {
+    // Even if TypeScript is bypassed, runtime should catch misuse
+    expect(() => {
+      (loader as unknown as { load: (c: unknown, k: string) => unknown }).load(
+        LoaderUser,
+        "key",
+      );
+    }).toThrow(/is a @PersistedCollection.*Use get\(\) or find\(\)/);
+  });
+
+  test("exists() throws for @PersistedCollection classes", () => {
+    expect(() => {
+      (
+        loader as unknown as { exists: (c: unknown, k: string) => boolean }
+      ).exists(LoaderUser, "key");
+    }).toThrow(/is a @PersistedCollection.*Use get\(\) or find\(\)/);
+  });
+});

@@ -26,9 +26,12 @@ import {
 
 /**
  * Convert camelCase to snake_case.
+ * Handles leading uppercase (e.g., 'ID' -> 'id', not '_i_d').
  */
 function toSnakeCase(str: string): string {
-  return str.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+  return str.replace(/[A-Z]/g, (letter, index) =>
+    index === 0 ? letter.toLowerCase() : `_${letter.toLowerCase()}`,
+  );
 }
 
 /**
@@ -73,6 +76,17 @@ let globalPendingIdCount = 0; // Track multiple @Id to detect error
 let globalPendingIndices: PendingIndexDef[] | null = null;
 
 /**
+ * Reset all global accumulator state.
+ * Called before throwing errors to prevent stale data affecting subsequent classes.
+ */
+function resetGlobalState(): void {
+  globalPendingFields = null;
+  globalPendingId = null;
+  globalPendingIdCount = 0;
+  globalPendingIndices = null;
+}
+
+/**
  * Mark a class as a persisted collection (multi-row table).
  *
  * @param table - SQLite table name
@@ -90,6 +104,7 @@ export function PersistedCollection(table: string) {
     while (proto && proto !== Function.prototype) {
       if (collectionMeta.has(proto)) {
         const parentMeta = collectionMeta.get(proto)!;
+        resetGlobalState();
         throw new Error(
           `@PersistedCollection class "${target.name}" cannot extend @PersistedCollection class "${proto.name}" (table: "${parentMeta.table}"). ` +
             `Collection classes do not support inheritance.`,
@@ -100,6 +115,7 @@ export function PersistedCollection(table: string) {
 
     // Check that @Id was defined
     if (!globalPendingId) {
+      resetGlobalState();
       throw new Error(
         `@PersistedCollection class "${target.name}" must have exactly one @Id field.`,
       );
@@ -107,11 +123,7 @@ export function PersistedCollection(table: string) {
 
     // Check that only one @Id was defined for this class
     if (globalPendingIdCount > 1) {
-      // Reset state before throwing
-      globalPendingFields = null;
-      globalPendingId = null;
-      globalPendingIdCount = 0;
-      globalPendingIndices = null;
+      resetGlobalState();
       throw new Error(
         `Multiple @Id decorators found in "${target.name}". A class can only have one @Id field.`,
       );

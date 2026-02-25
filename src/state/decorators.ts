@@ -25,9 +25,12 @@ import { classMeta, type FieldMeta, type FieldType } from "./types";
 
 /**
  * Convert camelCase to snake_case.
+ * Handles leading uppercase (e.g., 'ID' -> 'id', not '_i_d').
  */
 function toSnakeCase(str: string): string {
-  return str.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+  return str.replace(/[A-Z]/g, (letter, index) =>
+    index === 0 ? letter.toLowerCase() : `_${letter.toLowerCase()}`,
+  );
 }
 
 /** Options for the @Field decorator. */
