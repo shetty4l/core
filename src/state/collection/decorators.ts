@@ -69,6 +69,7 @@ type PendingIndexDef = { columns: string[] };
 // before the class decorator for the same class.
 let globalPendingFields: PendingFieldsMap | null = null;
 let globalPendingId: PendingIdDef | null = null;
+let globalPendingIdCount = 0; // Track multiple @Id to detect error
 let globalPendingIndices: PendingIndexDef[] | null = null;
 
 /**
@@ -104,6 +105,18 @@ export function PersistedCollection(table: string) {
       );
     }
 
+    // Check that only one @Id was defined for this class
+    if (globalPendingIdCount > 1) {
+      // Reset state before throwing
+      globalPendingFields = null;
+      globalPendingId = null;
+      globalPendingIdCount = 0;
+      globalPendingIndices = null;
+      throw new Error(
+        `Multiple @Id decorators found in "${target.name}". A class can only have one @Id field.`,
+      );
+    }
+
     // Initialize metadata for this class
     const meta = {
       table,
@@ -134,6 +147,7 @@ export function PersistedCollection(table: string) {
 
     // Clear pending id
     globalPendingId = null;
+    globalPendingIdCount = 0;
 
     collectionMeta.set(target, meta);
     return target;
@@ -155,12 +169,8 @@ export function Id(type: FieldType = "string", options?: IdOptions) {
     const property = extractPropertyName(context);
     const column = options?.column ?? "id";
 
-    if (globalPendingId) {
-      throw new Error(
-        `Multiple @Id decorators found. A class can only have one @Id field.`,
-      );
-    }
-
+    // Track count to detect multiple @Id in same class
+    globalPendingIdCount++;
     globalPendingId = { property, column, type };
   };
 }
