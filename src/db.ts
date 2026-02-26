@@ -77,6 +77,7 @@ export function createDatabaseManager(opts: DatabaseOpts): DatabaseManager {
       // Enable WAL mode for better concurrent access (not applicable to :memory:)
       if (path !== ":memory:") {
         db.exec("PRAGMA journal_mode = WAL;");
+        db.exec("PRAGMA busy_timeout = 5000;");
       }
 
       // Execute schema SQL

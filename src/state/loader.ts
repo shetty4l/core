@@ -538,8 +538,9 @@ export class StateLoader {
   /**
    * Execute a function within a database transaction.
    *
-   * Uses BEGIN IMMEDIATE to acquire a write lock immediately, preventing
-   * other writers. If the function throws, the transaction is rolled back.
+   * Uses BEGIN DEFERRED to defer lock acquisition until the first write.
+   * This allows concurrent readers and writers with WAL mode.
+   * If the function throws, the transaction is rolled back.
    * Otherwise, it is committed.
    *
    * @param fn - The function to execute within the transaction
@@ -559,7 +560,7 @@ export class StateLoader {
    * ```
    */
   async transaction<T>(fn: () => T | Promise<T>): Promise<T> {
-    this.db.exec("BEGIN IMMEDIATE");
+    this.db.exec("BEGIN DEFERRED");
     try {
       const result = await fn();
       this.db.exec("COMMIT");
