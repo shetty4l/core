@@ -4,10 +4,8 @@
  * Uses explicit type specification for all fields to ensure correct
  * serialization without relying on runtime type inference.
  *
- * Note: Bun's TC39 decorator implementation differs from the spec:
- * - Field decorator context is the field name as a string (not an object)
- * - Class decorator context is undefined (not an object)
- * - Field decorators run before class decorator (allows global accumulation)
+ * Note: Field decorators run before class decorator, which allows
+ * global accumulation of field definitions.
  *
  * @example
  * ```ts
@@ -31,6 +29,19 @@ function toSnakeCase(str: string): string {
   return str.replace(/[A-Z]/g, (letter, index) =>
     index === 0 ? letter.toLowerCase() : `_${letter.toLowerCase()}`,
   );
+}
+
+/**
+ * Extract property name from TC39 decorator context.
+ *
+ * TC39 field decorator context is a ClassFieldDecoratorContext object with a `name` property.
+ * This handles both the standard TC39 context object and legacy string contexts.
+ */
+function extractPropertyName(context: unknown): string {
+  if (typeof context === "object" && context !== null && "name" in context) {
+    return String((context as { name: unknown }).name);
+  }
+  return String(context);
 }
 
 /** Options for the @Field decorator. */
@@ -99,10 +110,8 @@ export function Persisted(table: string) {
  * @param options - Optional field configuration (column name override)
  */
 export function Field(type: FieldType, options?: FieldOptions) {
-  // Bun's TC39 decorator: context is the field name as string, not ClassFieldDecoratorContext
   return function (_target: undefined, context: unknown): void {
-    // In Bun, context is the field name as a string
-    const property = typeof context === "string" ? context : String(context);
+    const property = extractPropertyName(context);
     const column = options?.column ?? toSnakeCase(property);
 
     // Accumulate field definitions
