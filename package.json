@@ -48,6 +48,6 @@
     "fast-check": "^4.5.3",
     "husky": "^9.0.0",
     "oxlint": "^1.48.0",
-    "typescript": "^5.0.0"
+    "typescript": "^6.0.2"
   }
 }
